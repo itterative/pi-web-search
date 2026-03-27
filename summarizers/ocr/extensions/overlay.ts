@@ -8,7 +8,7 @@ import type { OcrRunOptions } from "../config";
 import type { CursorExtension } from "./cursor";
 import { OVERLAY_VIEWPORT_WIDTH, OVERLAY_VIEWPORT_HEIGHT, captureScreenshot } from "../screenshot";
 import type { InteractionPositioning } from "../state";
-import { safeCursorClick } from "../../ocr-screenshots";
+import { safeCursorClick } from "../common/interact";
 
 /** Result of overlay handling */
 export interface OverlayResult {
@@ -640,9 +640,10 @@ export class OverlayExtension extends OcrExtension {
             positioning: this.positioning,
             clickHistory: this.clickHistory,
             actionHistory: this.actionHistory,
-            warning: !screenshotChanged && this.hadClickLastRound
-                ? "The screenshot has NOT changed since the last action. Your previous click may have missed."
-                : undefined,
+            warning:
+                !screenshotChanged && this.hadClickLastRound
+                    ? "The screenshot has NOT changed since the last action. Your previous click may have missed."
+                    : undefined,
         };
 
         const text = render("overlay/initial-message", data);
