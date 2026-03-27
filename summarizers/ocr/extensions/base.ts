@@ -2,6 +2,7 @@ import type { Message, ToolCall, ToolResultMessage, AssistantMessage } from "@ma
 import type { SummarizerProgressUpdate } from "../../base";
 import type { OcrRunOptions } from "../config";
 import type { CheckpointState } from "./checkpoint";
+import type { OverlayState } from "./overlay";
 
 /**
  * Shared state fields managed by the OCR base class.
@@ -20,6 +21,7 @@ export interface OcrSharedState {
 export interface OcrBaseStateInterface {
     base: OcrSharedState;
     checkpoint: CheckpointState;
+    overlay: OverlayState;
 }
 
 /**
@@ -38,7 +40,9 @@ export type MessageChange =
           previousCount: number;
           source: string;
       }
-    | { type: "truncate"; count: number; previousCount: number; source: string };
+    | { type: "truncate"; count: number; previousCount: number; source: string }
+    | { type: "push"; previousCount: number; stackDepth: number; source: string }
+    | { type: "pop"; restoredCount: number; stackDepth: number; source: string };
 
 /**
  * Context passed to extensions during the interaction loop.
@@ -73,6 +77,26 @@ export interface OcrExtensionExecutionContext<TState extends OcrBaseStateInterfa
      * Truncate messages to a specific count. Triggers onMessagesChanged hook.
      */
     truncateMessages(count: number, source: string): void;
+
+    // --- Message stack ---
+    /**
+     * Stack of saved message arrays. Extensions can push/pop to temporarily
+     * replace the conversation (e.g., for overlay handling sub-conversations).
+     */
+    messageStack: Message[][];
+
+    /**
+     * Push current messages onto the stack and clear the message list.
+     * Triggers onMessagesChanged with type "push".
+     */
+    pushMessages(source: string): void;
+
+    /**
+     * Pop messages from the stack, restoring them as the current message list.
+     * Triggers onMessagesChanged with type "pop".
+     * @throws If the stack is empty.
+     */
+    popMessages(source: string): void;
 
     // --- Callbacks ---
     updateUI?: (update: SummarizerProgressUpdate) => void;

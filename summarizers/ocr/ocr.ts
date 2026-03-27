@@ -12,7 +12,7 @@ import type { Page } from "puppeteer";
 import type { SummarizerProgress, SummarizerResult } from "../base";
 import type { InteractionConfig, InteractionPositioning } from "./state";
 import { captureScreenshot } from "./screenshot";
-import { OcrTool, executeOcrToolCall, type OcrToolExecutionContext } from "./tools";
+import { OcrTool, executeOcrToolCall, type OcrToolExecutionContext, DismissOverlayTool } from "./tools";
 import { isEmptyResponse, extractThinkingFromContent, extractTextSummary } from "./response-utils";
 import {
     OcrExtension,
@@ -24,6 +24,7 @@ import {
     type SummarizerProgressUpdate,
     type CheckpointCompressionHost,
     type CheckpointRecoveryArgs,
+    type OverlayState,
 } from "./extensions";
 import {
     CheckpointExtension,
@@ -98,6 +99,7 @@ export interface OcrConfig {
 export type OcrBaseState<TCustom = object> = {
     base: OcrSharedState;
     checkpoint: CheckpointState;
+    overlay: OverlayState;
 } & TCustom;
 
 /**
@@ -134,21 +136,8 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
             maxIterations: 20,
             ...config.overlay,
         };
-        if (overlayConfig.enabled) {
-            this.overlayExtension = this.registerExtension(
-                new OverlayExtension({
-                    page: this.config.page,
-                    model: this.config.model,
-                    apiKey: this.config.apiKey,
-                    positioning: this.config.positioning,
-                    maxIterations: overlayConfig.maxIterations,
-                    width: this.config.width,
-                    maxHeight: this.config.maxHeight,
-                }),
-            );
-        }
 
-        // Register other extensions
+        // Register extensions that overlay tools depend on first
         this.cursorExtension = this.registerExtension(
             new CursorExtension({
                 page: this.config.page,
@@ -156,6 +145,27 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
             }),
         );
 
+        this.navigationExtension = this.registerExtension(new NavigationExtension({ page: this.config.page }));
+
+        if (overlayConfig.enabled) {
+            this.overlayExtension = this.registerExtension(
+                new OverlayExtension({
+                    page: this.config.page,
+                    positioning: this.config.positioning,
+                    maxIterations: overlayConfig.maxIterations,
+                    width: this.config.width,
+                    maxHeight: this.config.maxHeight,
+                    interaction: this.config.interaction,
+                    cursorExtension: this.cursorExtension,
+                    navigationExtension: this.navigationExtension,
+                }),
+            );
+
+            // Register dismiss-overlay tool definition (execution is intercepted by OverlayExtension.onToolCall)
+            this.registerTool(new DismissOverlayTool());
+        }
+
+        // Register other extensions
         this.registerExtension(
             new DebugExtension({
                 page: this.config.page,
@@ -163,8 +173,6 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
                 positioning: this.config.positioning,
             }),
         );
-
-        this.navigationExtension = this.registerExtension(new NavigationExtension({ page: this.config.page }));
 
         this.registerExtension(
             new ScreenshotExtension({
@@ -471,6 +479,12 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
     ): Promise<ToolResultMessage[]> {
         const results: ToolResultMessage[] = [];
 
+        // Build combined tool list including extension tools
+        const allTools = [...this.tools];
+        if (this.overlayExtension && extCtx.state.overlay.mode === "handling") {
+            allTools.push(...this.overlayExtension.getHandlingTools());
+        }
+
         for (const tc of toolCalls) {
             const toolContext: OcrToolExecutionContext = {
                 toolName: tc.name,
@@ -483,7 +497,7 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
             // Ask extensions if they want to intercept this tool call
             const { shouldExecute, interceptedResult } = await this.registry.dispatchOnToolCall(extCtx, tc);
 
-            const result = interceptedResult ?? (await executeOcrToolCall(toolContext, this.tools, tc));
+            const result = interceptedResult ?? (await executeOcrToolCall(toolContext, allTools, tc));
 
             // Notify ALL extensions of tool result (they can modify in place)
             await this.registry.dispatchOnToolResult(extCtx, tc, result);
@@ -575,6 +589,30 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
                     source,
                 });
             },
+            messageStack: [],
+            pushMessages: (source: string) => {
+                const previousCount = state.base.messages.length;
+                ctx.messageStack.push(state.base.messages);
+                state.base.messages = [];
+                this.registry.dispatchOnMessagesChanged(ctx, {
+                    type: "push",
+                    previousCount,
+                    stackDepth: ctx.messageStack.length,
+                    source,
+                });
+            },
+            popMessages: (source: string) => {
+                if (ctx.messageStack.length === 0) {
+                    throw new Error("Cannot pop messages: stack is empty");
+                }
+                state.base.messages = ctx.messageStack.pop()!;
+                this.registry.dispatchOnMessagesChanged(ctx, {
+                    type: "pop",
+                    restoredCount: state.base.messages.length,
+                    stackDepth: ctx.messageStack.length,
+                    source,
+                });
+            },
         };
 
         return ctx;
@@ -625,10 +663,16 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
     }
 
     private buildContext(extCtx: OcrExtensionExecutionContext<OcrBaseState<TCustom>>): Context {
+        // Collect extension tools (e.g., overlay handling tools during handling mode)
+        const extensionTools: OcrTool<any>[] = [];
+        if (this.overlayExtension && extCtx.state.overlay.mode === "handling") {
+            extensionTools.push(...this.overlayExtension.getHandlingTools());
+        }
+
         return {
             systemPrompt: this.getSystemPrompt(),
             messages: extCtx.state.base.messages,
-            tools: this.tools.map((t) => t.tool),
+            tools: [...this.tools.map((t) => t.tool), ...extensionTools.map((t) => t.tool)],
         };
     }
 }

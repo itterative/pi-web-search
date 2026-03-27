@@ -1,14 +1,12 @@
-import { complete, type Model, type Message, type Tool } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import type { Message, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import type { Page } from "puppeteer";
 
 import { OcrExtension, type OcrExtensionExecutionContext } from "./base";
-import { render } from "../instructions";
-import type { OcrRunOptions } from "../config";
-import type { CursorExtension } from "./cursor";
 import { OVERLAY_VIEWPORT_WIDTH, OVERLAY_VIEWPORT_HEIGHT, captureScreenshot } from "../screenshot";
 import type { InteractionPositioning } from "../state";
-import { safeCursorClick } from "../common/interact";
+import type { OcrTool } from "../tools/base";
+import { ClickTool, CursorTool, ScreenshotTool, WaitTool } from "../tools";
+import { render } from "../instructions";
 
 /** Result of overlay handling */
 export interface OverlayResult {
@@ -21,664 +19,451 @@ export interface OverlayResult {
  */
 export interface OverlayExtensionInit {
     page: Page;
-    model: Model<any>;
-    apiKey: string | undefined;
     positioning: InteractionPositioning;
-    /** Maximum iterations for overlay handling (default: 20) */
+    /** Maximum rounds for overlay handling (default: 20) */
     maxIterations?: number;
-    /** Optional reference to cursor extension for click history in debug screenshots */
-    cursorExtension?: CursorExtension;
-    /** Viewport width to restore after overlay handling */
+    /** Viewport width for overlay handling (default: 1280) */
     width?: number;
-    /** Viewport height to restore after overlay handling */
+    /** Max viewport height for overlay handling (default: 800). Handling viewport height = min(maxHeight, width). */
     maxHeight?: number;
+    /** Interaction config for tool creation */
+    interaction: import("../state").InteractionConfig;
+    /** Cursor extension for tools that need it */
+    cursorExtension: import("./cursor").CursorExtension;
+    /** Navigation extension for tools that need it */
+    navigationExtension: import("./navigation").NavigationExtension;
 }
 
 /**
- * State for overlay handling.
+ * Saved info about the original dismiss-overlay tool call that entered handling mode.
+ * Used to reconstruct a clean tool call → result pair in the main conversation on exit.
+ */
+export interface SavedDismissCall {
+    /** Tool call ID from the original dismiss-overlay call */
+    toolCallId: string;
+    /** Description argument from the original dismiss-overlay call */
+    description: string;
+}
+
+/**
+ * State for overlay handling, stored on ctx.state.overlay.
  */
 export interface OverlayState {
-    /** Whether an overlay was detected */
-    detected: boolean;
-    /** Whether the overlay has been handled (successfully or not) */
-    handled: boolean;
-    /** Result of overlay handling (set after handling completes) */
+    /** Current handling mode */
+    mode: "idle" | "handling" | "done";
+    /** Round when handling started */
+    handlingStartRound: number;
+    /** Result of overlay handling */
     result: OverlayResult | null;
+    /** Saved info about the dismiss-overlay call that started handling mode */
+    savedDismissCall: SavedDismissCall | null;
+    /** Viewport dimensions saved on entry, restored on exit */
+    savedViewport: { width: number; height: number } | null;
 }
 
-/** Tool definitions for overlay handling */
-const OVERLAY_CLICK_TOOL: Tool = {
-    name: "click",
-    description: "Click/tap at specific coordinates on the screenshot.",
-    parameters: Type.Object({
-        x: Type.Number({
-            description: "X coordinate (0.0 = left, 1.0 = right)",
-        }),
-        y: Type.Number({
-            description: "Y coordinate (0.0 = top, 1.0 = bottom)",
-        }),
-    }),
-};
-
-const OVERLAY_WAIT_TOOL: Tool = {
-    name: "wait",
-    description: "Wait for the page to change or load.",
-    parameters: Type.Object({
-        duration: Type.Optional(
-            Type.Number({
-                description: "Duration in ms (default: 1000, max: 5000)",
-            }),
-        ),
-    }),
-};
-
-const OVERLAY_FINISH_TOOL: Tool = {
-    name: "finish",
-    description: "Signal that handling is complete.",
-    parameters: Type.Object({
-        status: Type.Union([Type.Literal("success"), Type.Literal("failure")], {
-            description: "'success' if overlay dismissed, 'failure' if cannot dismiss",
-        }),
-        message: Type.Optional(Type.String({ description: "Optional explanation" })),
-    }),
-};
-
-const OVERLAY_TOOLS = [OVERLAY_CLICK_TOOL, OVERLAY_WAIT_TOOL, OVERLAY_FINISH_TOOL];
+/**
+ * Create default overlay state.
+ */
+export function createOverlayState(): OverlayState {
+    return {
+        mode: "idle",
+        handlingStartRound: 0,
+        result: null,
+        savedDismissCall: null,
+        savedViewport: null,
+    };
+}
 
 /**
- * Extension that detects and handles page overlays (captchas, cookie consent, verification pages).
+ * Extension that handles page overlays (captchas, cookie consent, verification pages).
  *
- * This extension:
- * 1. Detects overlays at initialization (`onInit`)
- * 2. If detected, handles them before the main summarizer starts (`onRoundStart`)
+ * When the model calls `dismiss-overlay`, the extension enters "handling mode":
+ * - Saves current messages and starts a fresh overlay-focused conversation
+ * - Registers overlay handling tools (click, cursor, screenshot, wait) via getTools()
+ * - Injects overlay-specific guidance via `onBeforeCompletion`
+ * - The model uses the overlay tools to dismiss the overlay
+ * - When the model calls `dismiss-overlay` again with a status, the extension:
+ *   - Exits handling mode
+ *   - Restores the original messages
+ *   - Returns the result
  *
- * The handling process runs its own internal interaction loop with click, wait, and finish tools.
+ * State is stored on `ctx.state.overlay` following the established pattern.
  *
  * @example
  * ```ts
  * const overlayExt = new OverlayExtension({
  *   page,
- *   model,
- *   apiKey,
- *   positioning: { type: "relative", x: 1000, y: 1000 },
+ *   positioning: { type: "relative", x: 1, y: 1 },
+ *   interaction: config.interaction,
+ *   cursorExtension,
+ *   navigationExtension,
  * });
  * registry.register(overlayExt);
- *
- * // After running the summarizer:
- * if (overlayExt.getResult()?.success === false) {
- *   throw new Error("Overlay not dismissed");
- * }
  * ```
  */
 export class OverlayExtension extends OcrExtension {
     readonly name = "overlay";
 
     private page: Page;
-    private model: Model<any>;
-    private apiKey: string | undefined;
     private positioning: InteractionPositioning;
     private maxIterations: number;
-    private cursorExtension: CursorExtension | undefined;
     private width: number;
     private maxHeight: number;
 
-    private state: OverlayState = {
-        detected: false,
-        handled: false,
-        result: null,
-    };
-
-    // Internal tracking during handling
-    private actionHistory: string[] = [];
-    private clickHistory: Array<{ x: number; y: number }> = [];
-    private previousScreenshot = "";
-    private hadClickLastRound = false;
+    /** Overlay handling tools (click, cursor, screenshot, wait) */
+    private readonly handlingTools: OcrTool<any>[];
 
     constructor(init: OverlayExtensionInit) {
         super();
 
         this.page = init.page;
-        this.model = init.model;
-        this.apiKey = init.apiKey;
         this.positioning = init.positioning;
         this.maxIterations = init.maxIterations ?? 20;
-        this.cursorExtension = init.cursorExtension;
         this.width = init.width ?? OVERLAY_VIEWPORT_WIDTH;
         this.maxHeight = init.maxHeight ?? OVERLAY_VIEWPORT_HEIGHT;
+
+        // Create overlay handling tools
+        this.handlingTools = [
+            new CursorTool({
+                page: this.page,
+                config: init.interaction,
+                cursorExtension: init.cursorExtension,
+                positioning: this.positioning,
+            }),
+            new ClickTool({
+                page: this.page,
+                config: init.interaction,
+                cursorExtension: init.cursorExtension,
+                positioning: this.positioning,
+                navigationExtension: init.navigationExtension,
+            }),
+            new ScreenshotTool({
+                page: this.page,
+                config: init.interaction,
+                cursorExtension: init.cursorExtension,
+            }),
+            new WaitTool({ config: init.interaction }),
+        ];
     }
 
-    private wrapContext(ctx: OcrExtensionExecutionContext): OcrExtensionExecutionContext {
-        return {
-            ...ctx,
-            log: (msg, type) => ctx.log?.(`[overlay] ${msg}`, type),
-        };
+    // --- Public API ---
+
+    /**
+     * Whether the extension is currently in overlay handling mode.
+     */
+    isInHandlingMode(ctx: OcrExtensionExecutionContext): boolean {
+        return ctx.state.overlay.mode === "handling";
     }
 
-    // Lifecycle hooks
-    async onBeforeRun(ctx: OcrExtensionExecutionContext, options: OcrRunOptions): Promise<void> {
-        ctx = this.wrapContext(ctx);
+    /**
+     * Get the result of overlay handling.
+     */
+    getResult(ctx: OcrExtensionExecutionContext): OverlayResult | null {
+        return ctx.state.overlay.result;
+    }
 
-        ctx.log?.("Checking for overlays...");
+    // --- State ---
 
-        // Set fixed viewport for overlay handling
-        await this.page.setViewport({
-            width: OVERLAY_VIEWPORT_WIDTH,
-            height: OVERLAY_VIEWPORT_HEIGHT,
-        });
+    override getInitialState(): Partial<import("./base").OcrBaseStateInterface> {
+        return { overlay: createOverlayState() };
+    }
 
-        this.state.detected = await this.detectOverlay(ctx);
+    // --- Tools ---
 
-        if (!this.state.detected) {
-            ctx.log?.("No overlay detected");
-            // Restore viewport before proceeding
-            await this.page.setViewport({
-                width: this.width,
-                height: this.maxHeight,
+    /**
+     * Get the overlay handling tools. Used by OcrBase.buildContext to
+     * conditionally include them.
+     */
+    getHandlingTools(): OcrTool<any>[] {
+        return this.handlingTools;
+    }
+
+    // --- Lifecycle hooks ---
+
+    /**
+     * Enter overlay handling mode when the model calls dismiss-overlay without a status.
+     * Exit handling mode when the model calls dismiss-overlay with a status.
+     * Guard against re-entering handling mode (issue 3).
+     */
+    async onToolCall(ctx: OcrExtensionExecutionContext, toolCall: ToolCall): Promise<ToolResultMessage | undefined> {
+        if (toolCall.name !== "dismiss-overlay") {
+            return undefined;
+        }
+
+        const args = toolCall.arguments as { description?: string; status?: "success" | "failure"; message?: string };
+
+        // Second call: model is reporting the result
+        if (args.status !== undefined) {
+            return this.handleStatusReport(ctx, args);
+        }
+
+        // First call: enter handling mode
+        return this.enterHandlingMode(ctx, toolCall, args);
+    }
+
+    /**
+     * Hard-enforce the overlay round budget (issue 6).
+     * Detect stale handling mode when rounds are exhausted and force-exit.
+     */
+    async onRoundStart(ctx: OcrExtensionExecutionContext): Promise<boolean | void> {
+        if (ctx.state.overlay.mode !== "handling") return;
+
+        const roundsSpent = ctx.currentRound - ctx.state.overlay.handlingStartRound;
+        if (roundsSpent >= this.maxIterations) {
+            ctx.log?.(`[overlay] Hard-enforcing round budget: ${roundsSpent} >= ${this.maxIterations}`);
+
+            const result: OverlayResult = {
+                success: false,
+                message: `Overlay not dismissed after ${this.maxIterations} rounds (budget exhausted)`,
+            };
+
+            // Build tool result BEFORE exitHandlingMode clears savedDismissCall
+            const toolResult = this.buildToolResult(ctx, result);
+
+            await this.exitHandlingMode(ctx, result);
+
+            // Append tool result to complete the dismiss-overlay call in the restored main conversation
+            ctx.appendMessages([toolResult], "OverlayExtension:budgetExhausted");
+
+            // Skip this round — the main loop continues normally on the next round
+            // with the restored conversation
+            return false;
+        }
+    }
+
+    /**
+     * Pop messages and restore viewport on error (issue 2).
+     */
+    async onError(ctx: OcrExtensionExecutionContext, _error: Error): Promise<void> {
+        if (ctx.state.overlay.mode === "handling") {
+            ctx.log?.(`[overlay] Error during handling mode, cleaning up`);
+
+            const result: OverlayResult = {
+                success: false,
+                message: `Overlay handling interrupted by error: ${_error.message}`,
+            };
+
+            // Build tool result BEFORE exitHandlingMode clears savedDismissCall
+            const toolResult = this.buildToolResult(ctx, result);
+
+            await this.exitHandlingMode(ctx, result);
+
+            // Append tool result to complete the dismiss-overlay call in the restored main conversation
+            ctx.appendMessages([toolResult], "OverlayExtension:error");
+        }
+    }
+
+    /**
+     * When in handling mode, inject overlay-specific guidance before each completion.
+     * Also enforces the max iterations limit with a soft prompt.
+     */
+    async onBeforeCompletion(ctx: OcrExtensionExecutionContext, messages: Message[]): Promise<void> {
+        if (ctx.state.overlay.mode !== "handling") return;
+
+        const roundsSpent = ctx.currentRound - ctx.state.overlay.handlingStartRound;
+
+        // Soft enforcement: tell the model to report failure when nearing the limit.
+        // Hard enforcement happens in onRoundStart.
+        if (roundsSpent >= this.maxIterations - 1) {
+            messages.push({
+                role: "user",
+                content: [
+                    {
+                        type: "text",
+                        text: "Maximum overlay handling rounds reached. Call dismiss-overlay with status='failure' and describe what happened.",
+                    },
+                ],
+                timestamp: Date.now(),
             });
             return;
         }
 
-        // Overlay detected - handle it
-        ctx.log?.("Overlay detected, attempting to dismiss...");
-        ctx.updateUI?.({
-            message: "Overlay detected, attempting to dismiss...",
+        // Inject overlay handling system instructions as the first message
+        const overlayInstructions = render("overlay/handling-guide", {
+            toolSnippets: this.handlingTools.map((t) => t.tool.promptSnippet).filter((s): s is string => s != null),
+            toolGuidelines: this.handlingTools
+                .map((t) => t.tool.promptGuidelines)
+                .filter((g): g is string => g != null),
+        });
+        messages.unshift({
+            role: "user",
+            content: [{ type: "text", text: overlayInstructions }],
+            timestamp: Date.now(),
         });
 
-        const result = await this.handleOverlay(ctx);
-        this.state.result = result;
-        this.state.handled = true;
+        // Inject reminder if the model has been trying for a while
+        if (roundsSpent >= 5 && roundsSpent % 3 === 0) {
+            messages.push({
+                role: "user",
+                content: [
+                    {
+                        type: "text",
+                        text: `Reminder: you are still handling an overlay (round ${roundsSpent}/${this.maxIterations}). If the overlay cannot be dismissed, call dismiss-overlay with status='failure'.`,
+                    },
+                ],
+                timestamp: Date.now(),
+            });
+        }
+    }
 
-        if (result.success) {
-            ctx.log?.(`Overlay dismissed: ${result.message}`);
-            ctx.updateUI?.({ message: "Overlay dismissed!" });
-            await this.waitForPageSettle();
-        } else {
-            ctx.log?.(`Overlay handling failed: ${result.message}`, "error");
+    // --- Private methods ---
+
+    private async enterHandlingMode(
+        ctx: OcrExtensionExecutionContext,
+        toolCall: ToolCall,
+        args: { description?: string },
+    ): Promise<ToolResultMessage> {
+        // Guard against re-entering handling mode (issue 3)
+        if (ctx.state.overlay.mode === "handling") {
+            return {
+                role: "toolResult",
+                toolCallId: toolCall.id,
+                toolName: toolCall.name,
+                content: [
+                    {
+                        type: "text",
+                        text: "Already in overlay handling mode. Call dismiss-overlay with status='success' or status='failure' to report the result first.",
+                    },
+                ],
+                isError: true,
+                timestamp: Date.now(),
+            };
         }
 
-        // Restore viewport
+        ctx.log?.(`[overlay] Entering handling mode${args.description ? `: ${args.description}` : ""}`);
+        ctx.updateUI?.({ message: "Handling overlay..." });
+
+        ctx.state.overlay.mode = "handling";
+        ctx.state.overlay.handlingStartRound = ctx.currentRound;
+        ctx.state.overlay.savedDismissCall = {
+            toolCallId: toolCall.id,
+            description: args.description ?? "",
+        };
+
+        // Push current messages onto the stack and start fresh
+        ctx.pushMessages("OverlayExtension:enterHandling");
+
+        // Save actual viewport and set fixed dimensions for handling
+        const viewport = this.page.viewport();
+        if (viewport) {
+            ctx.state.overlay.savedViewport = { width: viewport.width, height: viewport.height };
+        }
         await this.page.setViewport({
             width: this.width,
-            height: this.maxHeight,
+            height: Math.min(this.maxHeight, this.width),
         });
 
-        // Update screenshot in options so buildInitialMessage uses the new one
-        options.screenshot = await captureScreenshot(this.page, {
-            debug: false,
-            positioning: this.positioning,
-        });
-
-        ctx.log?.("Updated screenshot after overlay handling");
-    }
-
-    // Public API
-    isOverlayDetected(): boolean {
-        return this.state.detected;
-    }
-
-    isOverlayHandled(): boolean {
-        return this.state.handled;
-    }
-
-    getResult(): OverlayResult | null {
-        return this.state.result;
-    }
-
-    getState(): OverlayState {
-        return { ...this.state };
-    }
-
-    // Helper methods for eta templates
-    private getToolSnippets(): string[] {
-        return [
-            `Click/tap at specific coordinates on the screenshot.
-- X coordinate (0.0 = left, 1.0 = right)
-- Y coordinate (0.0 = top, 1.0 = bottom)`,
-            `Wait for the page to change or load.
-- Duration in ms (default: 1000, max: 5000)`,
-            `Signal that handling is complete.
-- 'success' if overlay dismissed
-- 'failure' if cannot dismiss
-- Optional message explaining the result`,
-        ];
-    }
-
-    private getToolGuidelines(): string[] {
-        return [
-            "Use click with relative coordinates (0.0-1.0). The grid overlay helps estimate positions.",
-            "Use wait after clicking or when content appears to be loading (blurred, spinner).",
-            "Call finish with 'success' when the main page content is visible (no more overlay).",
-            "Call finish with 'failure' if the overlay cannot be dismissed or the page is broken.",
-            "If clicks are correct but nothing changes after 2-3 attempts, the page may be broken - give up.",
-            "Don't waste attempts on broken or malicious overlays.",
-        ];
-    }
-
-    /**
-     * Run detection and return whether an overlay was found.
-     * Useful for standalone use without the extension lifecycle.
-     */
-    async detect(ctx: OcrExtensionExecutionContext): Promise<boolean> {
-        await this.page.setViewport({
-            width: OVERLAY_VIEWPORT_WIDTH,
-            height: OVERLAY_VIEWPORT_HEIGHT,
-        });
+        // Take a screenshot for context
         const screenshot = await captureScreenshot(this.page, {
             debug: true,
             positioning: this.positioning,
         });
-        const systemPrompt = render("overlay/detection");
-        const message: Message = {
-            role: "user",
-            content: [
-                { type: "image", data: screenshot, mimeType: "image/png" },
-                {
-                    type: "text",
-                    text: "Does this screenshot show an overlay that blocks the main content? Answer only 'yes' or 'no'.",
-                },
-            ],
-            timestamp: Date.now(),
-        };
-        const response = await complete(
-            this.model,
-            { systemPrompt, messages: [message] },
-            { apiKey: this.apiKey, maxTokens: 1500 },
-        );
-        const allContent = this.extractTextContent(response.content);
-        ctx.log?.(`Detection result: "${allContent.slice(0, 50)}..."`);
-        this.state.detected = allContent.includes("yes");
-        return this.state.detected;
-    }
-    /**
-     * Run overlay handling. Returns the result.
-     * Useful for standalone use without the extension lifecycle.
-     */
-    async handle(ctx: OcrExtensionExecutionContext): Promise<OverlayResult> {
-        // Reset internal state
-        this.actionHistory = [];
-        this.clickHistory = [];
-        this.previousScreenshot = "";
-        this.hadClickLastRound = false;
-        await this.page.setViewport({
-            width: OVERLAY_VIEWPORT_WIDTH,
-            height: OVERLAY_VIEWPORT_HEIGHT,
-        });
-        for (let iteration = 0; iteration < this.maxIterations; iteration++) {
-            if (ctx.signal?.aborted) {
-                return { success: false, message: "Cancelled" };
-            }
-
-            const result = await this.runHandlingIteration(ctx, iteration);
-            if (result) {
-                this.state.result = result;
-                this.state.handled = true;
-                return result;
-            }
-        }
-        const result = {
-            success: false,
-            message: `Overlay not dismissed after ${this.maxIterations} attempts`,
-        };
-        this.state.result = result;
-        this.state.handled = true;
-        return result;
-    }
-    /**
-     * Detect and handle overlay in one call.
-     * Useful for standalone use without the extension lifecycle.
-     */
-    async detectAndHandle(ctx: OcrExtensionExecutionContext): Promise<OverlayResult> {
-        const detected = await this.detect(ctx);
-        if (!detected) {
-            return { success: true, message: "No overlay detected" };
-        }
-        ctx.log?.("Overlay detected, attempting to dismiss...", "info");
-        return this.handle(ctx);
-    }
-
-    async redetect(ctx: OcrExtensionExecutionContext): Promise<boolean> {
-        ctx.log?.("Re-detecting overlays...");
-
-        await this.page.setViewport({
-            width: OVERLAY_VIEWPORT_WIDTH,
-            height: OVERLAY_VIEWPORT_HEIGHT,
-        });
-
-        this.state.detected = await this.detectOverlay(ctx);
-
-        if (this.state.detected) {
-            this.state.handled = false;
-            this.state.result = null;
-        }
-
-        return this.state.detected;
-    }
-
-    // Detection
-    private async detectOverlay(ctx: OcrExtensionExecutionContext): Promise<boolean> {
-        const screenshot = await captureScreenshot(this.page, {
-            debug: true,
-            positioning: this.positioning,
-        });
-
-        const systemPrompt = render("overlay/detection");
-        const message: Message = {
-            role: "user",
-            content: [
-                { type: "image", data: screenshot, mimeType: "image/png" },
-                {
-                    type: "text",
-                    text: "Does this screenshot show an overlay that blocks the main content? Answer only 'yes' or 'no'.",
-                },
-            ],
-            timestamp: Date.now(),
-        };
-
-        const response = await complete(
-            this.model,
-            { systemPrompt, messages: [message] },
-            { apiKey: this.apiKey, signal: ctx.signal, maxTokens: 1500 },
-        );
-
-        const allContent = this.extractTextContent(response.content);
-        ctx.log?.(`Detection result: "${allContent.slice(0, 50)}..."`);
-
-        return allContent.includes("yes");
-    }
-
-    // Handling
-    private async handleOverlay(ctx: OcrExtensionExecutionContext): Promise<OverlayResult> {
-        // Reset internal state
-        this.actionHistory = [];
-        this.clickHistory = [];
-        this.previousScreenshot = "";
-        this.hadClickLastRound = false;
-
-        for (let iteration = 0; iteration < this.maxIterations; iteration++) {
-            if (ctx.signal?.aborted) {
-                return { success: false, message: "Cancelled" };
-            }
-
-            const result = await this.runHandlingIteration(ctx, iteration);
-            if (result) {
-                return result;
-            }
-        }
 
         return {
-            success: false,
-            message: `Overlay not dismissed after ${this.maxIterations} attempts`,
+            role: "toolResult",
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            content: [
+                { type: "image", data: screenshot, mimeType: "image/png" },
+                {
+                    type: "text",
+                    text:
+                        "Overlay detected. Use your normal tools (click, cursor, screenshot, wait, etc.) to dismiss it. " +
+                        "When the overlay is gone, call dismiss-overlay with status='success'. " +
+                        "If it cannot be dismissed, call dismiss-overlay with status='failure'.",
+                },
+            ],
+            isError: false,
+            timestamp: Date.now(),
         };
     }
 
-    private async runHandlingIteration(
+    private async handleStatusReport(
         ctx: OcrExtensionExecutionContext,
-        iteration: number,
-    ): Promise<OverlayResult | undefined> {
-        ctx.updateUI?.({
-            message: `Handling overlay (attempt ${iteration + 1}/${this.maxIterations})...`,
-            round: iteration + 1,
-            maxRounds: this.maxIterations,
-        });
+        args: { status?: "success" | "failure"; message?: string },
+    ): Promise<ToolResultMessage> {
+        const success = args.status === "success";
+        const message = args.message ?? (success ? "Overlay dismissed" : "Could not dismiss overlay");
 
-        // Take screenshot with grid overlay
-        const { rawScreenshot, griddedScreenshot } = await this.takeGriddedScreenshot();
+        ctx.log?.(`[overlay] Status report: ${args.status}${args.message ? ` - ${args.message}` : ""}`);
 
-        // Check if screenshot changed
-        const screenshotChanged = rawScreenshot !== this.previousScreenshot;
-        this.previousScreenshot = rawScreenshot;
+        const result: OverlayResult = { success, message };
 
-        // Build user message
-        const userMessage = this.buildUserMessage(griddedScreenshot, screenshotChanged);
+        // Build tool result BEFORE exitHandlingMode, which may invalidate savedDismissCall
+        const toolResult = this.buildToolResult(ctx, result);
 
-        // Get model response
-        const response = await complete(
-            this.model,
-            {
-                systemPrompt: render("overlay/system", {
-                    toolSnippets: this.getToolSnippets(),
-                    toolGuidelines: this.getToolGuidelines(),
-                }),
-                messages: [userMessage],
-                tools: OVERLAY_TOOLS,
-            },
-            { apiKey: this.apiKey, signal: ctx.signal },
-        );
+        // Exit handling mode: pop messages, restore viewport
+        await this.exitHandlingMode(ctx, result);
 
-        if (response.stopReason === "aborted") {
-            return { success: false, message: "Cancelled" };
+        if (success) {
+            ctx.updateUI?.({ message: "Overlay dismissed!" });
+        } else {
+            ctx.updateUI?.({ message: `Overlay handling failed: ${message}` });
         }
 
-        // Process tool calls
-        const toolCalls = response.content.filter((c) => c.type === "toolCall");
-
-        if (toolCalls.length === 0) {
-            return this.handleNoToolCalls(ctx, response.content);
-        }
-
-        // Reset counters
-        this.hadClickLastRound = false;
-
-        // Process each tool call
-        for (const tc of toolCalls) {
-            if (tc.type !== "toolCall") continue;
-
-            if (tc.name === "finish") {
-                return this.handleFinish(ctx, tc.arguments);
-            }
-
-            if (tc.name === "click") {
-                this.hadClickLastRound = true;
-                await this.handleClick(ctx, tc.arguments, iteration);
-            } else if (tc.name === "wait") {
-                await this.handleWait(ctx, tc.arguments, iteration);
-            }
-        }
-
-        // Brief settle delay after actions
-        await new Promise((r) => setTimeout(r, 300));
-
-        return undefined;
+        // Return a tool result using the ORIGINAL dismiss-overlay call ID.
+        // processToolCalls pushes this to the restored main conversation,
+        // completing the tool call -> result pair without synthetic messages.
+        return toolResult;
     }
 
-    private async handleClick(
-        ctx: OcrExtensionExecutionContext,
-        args: Record<string, unknown>,
-        iteration: number,
-    ): Promise<void> {
-        const relX = Number(args.x);
-        const relY = Number(args.y);
+    /**
+     * Centralized cleanup for exiting handling mode (issues 1, 2, 6).
+     *
+     * 1. Pops the saved messages from the stack
+     * 2. Restores the viewport
+     * 3. Transitions mode to "done"
+     *
+     * Does NOT inject messages. The caller is responsible for ensuring the
+     * main conversation has a coherent tool call -> result pair:
+     * - handleStatusReport: returns a ToolResultMessage (pushed by processToolCalls)
+     * - onRoundStart/onError: appends via ctx.appendMessages
+     */
+    private async exitHandlingMode(ctx: OcrExtensionExecutionContext, result: OverlayResult): Promise<void> {
+        ctx.state.overlay.mode = "done";
+        ctx.state.overlay.result = result;
 
-        if (isNaN(relX) || isNaN(relY)) {
-            this.actionHistory.push(`Click failed: invalid coordinates (${args.x}, ${args.y})`);
-            return;
-        }
+        // Restore original messages from the stack
+        ctx.popMessages("OverlayExtension:exitHandling");
 
-        const clampedRelX = Math.max(0, Math.min(1, relX));
-        const clampedRelY = Math.max(0, Math.min(1, relY));
-
-        const pageX = Math.round(clampedRelX * OVERLAY_VIEWPORT_WIDTH);
-        const pageY = Math.round(clampedRelY * OVERLAY_VIEWPORT_HEIGHT);
-
-        ctx.log?.(`Click at (${clampedRelX.toFixed(2)}, ${clampedRelY.toFixed(2)}) -> page (${pageX}, ${pageY})`);
-
-        try {
-            const result = await safeCursorClick(this.page, pageX, pageY);
-
-            if (!result.success) {
-                this.actionHistory.push(`Click failed: ${result.error}`);
-                return;
-            }
-
-            await new Promise((r) => setTimeout(r, 500));
-
-            this.clickHistory.push({ x: clampedRelX, y: clampedRelY });
-            this.actionHistory.push(`Clicked at (${clampedRelX.toFixed(2)}, ${clampedRelY.toFixed(2)})`);
-
-            ctx.updateUI?.({
-                message: `Clicked at (${clampedRelX.toFixed(2)}, ${clampedRelY.toFixed(2)})`,
-                action: "click",
-            });
-        } catch (error) {
-            this.actionHistory.push(`Click failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
-
-        await this.executeClick(ctx, clampedRelX, clampedRelY, pageX, pageY);
-    }
-
-    private async executeClick(
-        ctx: OcrExtensionExecutionContext,
-        clampedRelX: number,
-        clampedRelY: number,
-        pageX: number,
-        pageY: number,
-    ): Promise<void> {
-        try {
-            const result = await safeCursorClick(this.page, pageX, pageY);
-
-            if (!result.success) {
-                this.actionHistory.push(`Click failed: ${result.error}`);
-                return;
-            }
-
-            await new Promise((r) => setTimeout(r, 500));
-
-            this.clickHistory.push({ x: clampedRelX, y: clampedRelY });
-            this.actionHistory.push(`Clicked at (${clampedRelX.toFixed(2)}, ${clampedRelY.toFixed(2)})`);
-
-            ctx.updateUI?.({
-                message: `Clicked at (${clampedRelX.toFixed(2)}, ${clampedRelY.toFixed(2)})`,
-            });
-        } catch (error) {
-            this.actionHistory.push(`Click failed: ${error instanceof Error ? error.message : String(error)}`);
+        // Restore viewport to pre-handling dimensions
+        const savedViewport = ctx.state.overlay.savedViewport;
+        if (savedViewport) {
+            await this.page.setViewport(savedViewport);
+            ctx.state.overlay.savedViewport = null;
         }
     }
 
-    private async handleWait(
-        ctx: OcrExtensionExecutionContext,
-        args: Record<string, unknown>,
-        _iteration: number,
-    ): Promise<void> {
-        const duration = Math.min(Math.max(Number(args.duration) || 1000, 100), 5000);
-        await new Promise((r) => setTimeout(r, duration));
-
-        this.actionHistory.push(`Waited ${duration}ms`);
-        ctx.updateUI?.({ message: `Waiting ${duration}ms...`, action: "wait" });
-    }
-
-    private handleFinish(ctx: OcrExtensionExecutionContext, args: Record<string, unknown>): OverlayResult {
-        const status = args.status as "success" | "failure";
-        const message =
-            typeof args.message === "string"
-                ? args.message
-                : status === "success"
-                  ? "Overlay dismissed"
-                  : "Could not dismiss overlay";
-
-        const result = { success: status === "success", message };
+    /**
+     * Build a tool result using the saved original dismiss-overlay call ID.
+     */
+    private buildToolResult(ctx: OcrExtensionExecutionContext, result: OverlayResult): ToolResultMessage {
+        const toolCallId = ctx.state.overlay.savedDismissCall?.toolCallId ?? "unknown";
 
         if (result.success) {
-            ctx.log?.(`Finished successfully: ${message}`);
-        } else {
-            ctx.log?.(`Finished with failure: ${message}`, "warning");
-        }
-
-        return result;
-    }
-
-    private handleNoToolCalls(
-        ctx: OcrExtensionExecutionContext,
-        content: Message["content"],
-    ): OverlayResult | undefined {
-        const allContent = this.extractTextContent(content);
-
-        // Check for implicit success/failure
-        if (allContent.includes("solved") || allContent.includes("success") || allContent.includes("completed")) {
-            ctx.log?.("Model indicates overlay dismissed");
             return {
-                success: true,
-                message: "Model indicated overlay was dismissed",
+                role: "toolResult",
+                toolCallId,
+                toolName: "dismiss-overlay",
+                content: [{ type: "text", text: `Overlay dismissed: ${result.message}` }],
+                isError: false,
+                timestamp: Date.now(),
             };
         }
-
-        if (allContent.includes("failed") || allContent.includes("cannot solve") || allContent.includes("unable")) {
-            ctx.log?.("Model indicates overlay cannot be dismissed", "warning");
-            return {
-                success: false,
-                message: "Model indicated overlay cannot be dismissed",
-            };
-        }
-
-        // Track consecutive no-action rounds
-        this.hadClickLastRound = false;
-        this.actionHistory.push("System: You must use tools to dismiss the overlay. Call 'finish' when done.");
-
-        return undefined;
-    }
-
-    // Helpers
-    private async takeGriddedScreenshot(): Promise<{
-        rawScreenshot: string;
-        griddedScreenshot: string;
-    }> {
-        const rawScreenshot = await captureScreenshot(this.page, {
-            debug: false,
-            positioning: this.positioning,
-        });
-
-        const griddedScreenshot = await captureScreenshot(this.page, {
-            debug: true,
-            positioning: this.positioning,
-            cursorHistory: await this.cursorExtension?.getRecentHistory(5),
-        });
-
-        return { rawScreenshot, griddedScreenshot };
-    }
-
-    private buildUserMessage(screenshot: string, screenshotChanged: boolean): Message {
-        const data = {
-            positioning: this.positioning,
-            clickHistory: this.clickHistory,
-            actionHistory: this.actionHistory,
-            warning:
-                !screenshotChanged && this.hadClickLastRound
-                    ? "The screenshot has NOT changed since the last action. Your previous click may have missed."
-                    : undefined,
-        };
-
-        const text = render("overlay/initial-message", data);
 
         return {
-            role: "user",
-            content: [
-                { type: "image", data: screenshot, mimeType: "image/png" },
-                { type: "text", text },
-            ],
+            role: "toolResult",
+            toolCallId,
+            toolName: "dismiss-overlay",
+            content: [{ type: "text", text: `Could not dismiss overlay: ${result.message}` }],
+            isError: true,
             timestamp: Date.now(),
         };
-    }
-
-    private extractTextContent(content: Message["content"]): string {
-        if (typeof content === "string") {
-            return content.toLowerCase();
-        }
-
-        const textContent = content
-            .filter((c): c is { type: "text"; text: string } => c.type === "text")
-            .map((c) => c.text.toLowerCase().trim())
-            .join("");
-
-        const thinkingContent = content
-            .filter((c): c is { type: "thinking"; thinking: string } => c.type === "thinking")
-            .map((c) => c.thinking.toLowerCase().trim())
-            .join(" ");
-
-        return textContent || thinkingContent;
     }
 
     private async waitForPageSettle(): Promise<void> {
         try {
-            await this.page.waitForNetworkIdle({ timeout: 5000 }).catch(() => {});
+            await this.page.waitForNetworkIdle({ timeout: 5000 });
         } catch {
             // Ignore timeout
         }

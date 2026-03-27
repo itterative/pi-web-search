@@ -53,4 +53,11 @@ export {
 } from "./cursor";
 
 // Overlay extension - detects and handles page overlays (captchas, cookie consent)
-export { OverlayExtension, type OverlayExtensionInit, type OverlayState, type OverlayResult } from "./overlay";
+export {
+    OverlayExtension,
+    type OverlayExtensionInit,
+    type OverlayState,
+    type OverlayResult,
+    type SavedDismissCall,
+    createOverlayState,
+} from "./overlay";

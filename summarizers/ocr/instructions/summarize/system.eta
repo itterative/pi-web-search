@@ -9,6 +9,16 @@ You have access to tools:
 <%~ guideline %>
 <% }) -%>
 
+# OVERLAY HANDLING
+If you see a popup, modal, cookie banner, captcha, or other overlay blocking the page:
+- Call dismiss-overlay (without status) to enter overlay handling mode
+- Use your normal tools (click, cursor, screenshot, wait) to dismiss the overlay
+- Cookie banners: click "Accept All", "OK", "Agree", or close button
+- Captchas: click checkboxes, solve if possible
+- Verification pages: wait for them to complete automatically
+- When done, call dismiss-overlay with status='success' or status='failure'
+- After successful dismissal, take a screenshot to verify before continuing
+
 When given an instruction:
 - Follow the instruction exactly using the available tools
 - Report your findings clearly in your final response

@@ -32,10 +32,20 @@ exports[`SummarizeOcrSummarizerV2 > getSystemPrompt > should render system promp
 "You are a helpful assistant that analyzes web page screenshots.
 
 You have access to tools:
+- dismiss-overlay - Dismiss a popup, cookie banner, captcha, or other overlay blocking the page. Call without status to start, call with status='success'/'failure' to report result.
 - cursor - Move cursor to inspect elements at a position
 - click - Click at coordinates, by text, or at cursor position
 - scroll - Scroll up/down or jump to top/bottom
 - screenshot - Capture current viewport (debug mode for grid)
+
+## dismiss-overlay tool
+- Call WITHOUT status when you see an overlay to enter handling mode
+- You will receive a screenshot and can use your normal tools (click, cursor, screenshot, wait) to dismiss the overlay
+- Call WITH status='success' when the overlay is gone and the main content is visible
+- Call WITH status='failure' if the overlay cannot be dismissed
+- If dismissal fails, summarize whatever content is visible
+- After successful dismissal, take a screenshot to verify before continuing your main task
+
 
 ## cursor tool
 - Move cursor to a position to discover what's there before interacting
@@ -63,10 +73,13 @@ You have access to tools:
 
 ## scroll tool
 - Scroll to reveal more content on long pages
+- **Recommended**: Use \`mode="wheel"\` for natural scrolling at cursor position
 - \`direction="down"\` (default): scroll down to see content below
 - \`direction="up"\`: scroll up to see content above
 - \`to="top"\`: jump to the very top of the page
 - \`to="bottom"\`: jump to the very bottom of the page
+- \`mode="wheel"\`: scroll using mouse wheel at cursor position (cursor centered by default if not set)
+- \`mode="page"\`: use page-based scrolling (legacy mode)
 - After scrolling, a new screenshot is provided automatically
 - Use scroll when you've explored visible content and need to see more
 
@@ -79,6 +92,16 @@ You have access to tools:
   - Use when having trouble finding interactive elements
 - Use after actions that don't auto-provide screenshots
 - Check scroll percentage to know if more content exists below
+
+# OVERLAY HANDLING
+If you see a popup, modal, cookie banner, captcha, or other overlay blocking the page:
+- Call dismiss-overlay (without status) to enter overlay handling mode
+- Use your normal tools (click, cursor, screenshot, wait) to dismiss the overlay
+- Cookie banners: click "Accept All", "OK", "Agree", or close button
+- Captchas: click checkboxes, solve if possible
+- Verification pages: wait for them to complete automatically
+- When done, call dismiss-overlay with status='success' or status='failure'
+- After successful dismissal, take a screenshot to verify before continuing
 
 When given an instruction:
 - Follow the instruction exactly using the available tools

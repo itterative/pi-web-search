@@ -55,6 +55,8 @@ export class DebugExtension extends OcrExtension {
     private lastWrittenFingerprint: string | null = null;
     /** Index of the last message we wrote (for quick lookup) */
     private lastWrittenIndex: number = -1;
+    /** Stack of write positions, one per message stack level */
+    private writePositionStack: Array<{ fingerprint: string | null; index: number }> = [];
 
     constructor(init: DebugExtensionInit) {
         super();
@@ -173,13 +175,37 @@ export class DebugExtension extends OcrExtension {
             return;
         }
 
-        // Reset tracking when messages are replaced or truncated (compression)
-        if (change.type === "replace" || change.type === "truncate") {
+        if (change.type === "replace") {
             ctx.log?.(
-                `[debug] Messages ${change.type}: ${change.previousCount} -> ${change.type === "replace" ? change.messages.length : change.count} (source: ${change.source})`,
+                `[debug] Messages replaced: ${change.previousCount} -> ${change.messages.length} (source: ${change.source})`,
             );
             this.lastWrittenFingerprint = null;
             this.lastWrittenIndex = -1;
+        } else if (change.type === "truncate") {
+            ctx.log?.(
+                `[debug] Messages truncated: ${change.previousCount} -> ${change.count} (source: ${change.source})`,
+            );
+            this.lastWrittenFingerprint = null;
+            this.lastWrittenIndex = -1;
+        } else if (change.type === "push") {
+            ctx.log?.(
+                `[debug] Messages pushed to stack: ${change.previousCount} messages saved (stack depth: ${change.stackDepth}, source: ${change.source})`,
+            );
+            this.writePositionStack.push({
+                fingerprint: this.lastWrittenFingerprint,
+                index: this.lastWrittenIndex,
+            });
+            this.lastWrittenFingerprint = null;
+            this.lastWrittenIndex = -1;
+        } else if (change.type === "pop") {
+            ctx.log?.(
+                `[debug] Messages restored from stack: ${change.restoredCount} messages recovered (stack depth: ${change.stackDepth}, source: ${change.source})`,
+            );
+            const pos = this.writePositionStack.pop();
+            if (pos) {
+                this.lastWrittenFingerprint = pos.fingerprint;
+                this.lastWrittenIndex = pos.index;
+            }
         } else if (change.type === "append") {
             ctx.log?.(`[debug] Messages appended: +${change.messages.length} (source: ${change.source})`);
         }
