@@ -1,0 +1,7 @@
+<% if (it.checkpoints.length > 0) { %>## Checkpoints
+
+Information collected during exploration:
+<% it.checkpoints.forEach(function(cp, i) { %>
+### <%~ i + 1 %>. <%~ cp.title %>
+<%~ cp.content %>
+<% }) %><% } %>

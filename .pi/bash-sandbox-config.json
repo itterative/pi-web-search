@@ -1,0 +1,31 @@
+{
+    "sandbox": {
+        "mounts": {
+            "~/.nvm": "readonly"
+        }
+    },
+    "permissions": {
+        "npm test": "allow:sandbox",
+        "npm test *": "allow:sandbox",
+        "npm run test:*": "allow:sandbox",
+        "npx tsc *": "allow:sandbox",
+        "cd */pi-web-search && npm test": "allow:sandbox",
+        "cd */pi-web-search && npm test *": "allow:sandbox",
+        "cd */pi-web-search && npm run test:*": "allow:sandbox",
+        "cd */pi-web-search && npx tsc *": "allow:sandbox",
+        "npm install *": "ask",
+        "npx vitest *": "allow:sandbox",
+        "npx ts-node *": "ask",
+        "ls *": "allow:sandbox",
+        "ls /*": "ask",
+        "find * | grep *": "allow:sandbox",
+        "echo *": "allow:sandbox",
+        "find *": "allow:sandbox",
+        "head *": "allow:sandbox",
+        "grep *": "allow:sandbox",
+        "xargs grep *": "allow:sandbox",
+        "find -exec *": "ask",
+        "echo * > *": "ask",
+        "echo * >> *": "ask"
+    }
+}

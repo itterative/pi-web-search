@@ -1,0 +1,10 @@
+Look at this screenshot and determine if it shows an overlay that prevents access to the main content.
+
+Overlays include:
+- Verification/hashing pages: "Checking your browser", progress bars, hash animations, "Verifying" spinners
+- Captchas: "I'm not a robot" checkbox, image selection grids, Cloudflare challenges, reCAPTCHA/hCaptcha widgets
+- Cookie consent: "Accept cookies" banners, GDPR dialogs, cookie preference modals, "We use cookies" notices
+
+Respond with ONLY "yes" or "no".
+
+If you see a mostly normal webpage with some content visible (not blocked by an overlay), answer "no" even if there might be a small cookie banner at the edge.

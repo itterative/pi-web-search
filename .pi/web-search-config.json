@@ -1,0 +1,16 @@
+{
+    "search": {
+        "provider": "kagi-web",
+        "summarizeTopResult": true,
+        "maxResults": 20
+    },
+    "fetch": {
+        "useOcr": true,
+        "interactionRounds": 100,
+        "interactionDelay": 1500,
+        "captchaMaxIterations": 20,
+        "screenshotWidth": 1280,
+        "screenshotMaxHeight": 2000,
+        "checkpointThreshold": 0.6
+    }
+}

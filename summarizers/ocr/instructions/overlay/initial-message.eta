@@ -1,0 +1,33 @@
+<% if (it.positioning.type === "relative") { %>
+This screenshot shows an overlay blocking the main content. Use RELATIVE coordinates (0.0 to <%= it.positioning.x %>) to click.
+
+A grid overlay shows percentage markers (10% intervals, with 50% emphasized).
+- X=0 is LEFT edge, X=<%= it.positioning.x %> is RIGHT edge
+- Y=0 is TOP edge, Y=<%= it.positioning.y %> is BOTTOM edge
+- For center: x=<%= it.positioning.x / 2 %>, y=<%= it.positioning.y / 2 %>
+<% } else { %>
+This screenshot shows an overlay blocking the main content. Use ABSOLUTE pixel coordinates to click.
+<% } %>
+
+IMPORTANT: If your clicks are correct but the page isn't responding (screenshot unchanged after 2-3 attempts), give up and call finish with 'failure'. Don't waste attempts on broken pages.
+<% if (it.clickHistory.length > 0) { %>
+
+Blue crosshair markers show your recent clicks (numbered #1, #2, etc.).
+The most recent click (#<%= it.clickHistory.length %>) was at (<%= it.clickHistory[it.clickHistory.length - 1].x.toFixed(2) %>, <%= it.clickHistory[it.clickHistory.length - 1].y.toFixed(2) %>).
+Use these as reference! Calculate new coordinates:
+- If target is to the LEFT of a marker, use a SMALLER x value
+- If target is to the RIGHT of a marker, use a LARGER x value
+- If target is ABOVE a marker, use a SMALLER y value
+- If target is BELOW a marker, use a LARGER y value
+<% } %>
+<% if (it.warning) { %>
+
+WARNING: <%= it.warning %>
+<% } %>
+<% if (it.actionHistory.length > 0) { %>
+
+Previous actions:
+<% it.actionHistory.forEach(function(action, i) { %>
+<%= i + 1 %>. <%= action %>
+<% }) %>
+<% } %>

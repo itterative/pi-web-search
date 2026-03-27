@@ -1,0 +1,7 @@
+<% if (it.instruction) { %>Instruction: "<%~ it.instruction %>"
+
+Use the available tools to complete this task. Respond with your findings when done.<% } else { %>Please extract all content from this web page.<% } %>
+<% if (it.linksContext) { %>
+Here are links found on this page that you may reference:
+
+<%~ it.linksContext %><% } %>

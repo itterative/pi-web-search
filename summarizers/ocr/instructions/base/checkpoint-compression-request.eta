@@ -1,0 +1,10 @@
+You're approaching context limits. Please checkpoint your progress.
+
+If you haven't made sufficient checkpoints to track your progress, please do so now in accordance to the original instruction. After you final response, you will lose context on the exploration you've done so far, and the checkpoints are the only way to recover this information.
+
+Respond with:
+1. **Progress so far**: What you've accomplished and discovered
+2. **Navigation findings**: Coordinates, element text, URLs, or approaches that worked
+3. **Next steps**: What you plan to do next
+
+Your response will be used to continue with a fresh context, so include all important information. Do not use any tools except the checkpoint tool. Do not continue your exploration, respond with your progress so far. I will ask you to continue your exploration after your next response.

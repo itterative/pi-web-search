@@ -1,0 +1,157 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://raw.githubusercontent.com/itterative/pi-web-search/refs/heads/main/docs/schema.json",
+    "title": "pi-web-search Configuration",
+    "description": "Configuration schema for the pi-web-search extension.",
+    "type": "object",
+    "properties": {
+        "search": {
+            "$ref": "#/definitions/SearchConfig"
+        },
+        "fetch": {
+            "$ref": "#/definitions/FetchConfig"
+        },
+        "providers": {
+            "$ref": "#/definitions/ProvidersConfig"
+        }
+    },
+    "definitions": {
+        "SearchProvider": {
+            "type": "string",
+            "enum": ["kagi-web", "duckduckgo-web"],
+            "description": "Provider types supported by the web-search tool."
+        },
+        "SearchConfig": {
+            "type": "object",
+            "description": "Configuration for the web-search tool.",
+            "properties": {
+                "provider": {
+                    "$ref": "#/definitions/SearchProvider",
+                    "description": "Which search provider to use.",
+                    "default": "duckduckgo-web"
+                },
+                "summarizeTopResult": {
+                    "type": "boolean",
+                    "description": "Whether to summarize the top search result using an LLM.",
+                    "default": false
+                },
+                "maxResults": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Maximum number of search results to return.",
+                    "default": 10
+                }
+            }
+        },
+        "FetchModelConfig": {
+            "type": "object",
+            "description": "Model configuration for fetch summarization.",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "description": "Provider name, e.g., \"anthropic\", \"openai\"."
+                },
+                "modelId": {
+                    "type": "string",
+                    "description": "Model identifier, e.g., \"claude-3-haiku-20240307\"."
+                }
+            }
+        },
+        "FetchConfig": {
+            "type": "object",
+            "description": "Configuration for the web-fetch tool.",
+            "properties": {
+                "model": {
+                    "$ref": "#/definitions/FetchModelConfig",
+                    "description": "Model to use for content summarization."
+                },
+                "useOcr": {
+                    "type": "boolean",
+                    "description": "Whether to use OCR for image-based content.",
+                    "default": false
+                },
+                "screenshotWidth": {
+                    "type": "integer",
+                    "minimum": 320,
+                    "maximum": 3840,
+                    "default": 720,
+                    "description": "Screenshot viewport width in pixels."
+                },
+                "screenshotMaxHeight": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "default": 3000,
+                    "description": "Maximum screenshot height in pixels (prevents huge screenshots)."
+                },
+                "maxContentLength": {
+                    "type": "integer",
+                    "minimum": 1000,
+                    "default": 50000,
+                    "description": "Maximum content length to process, in characters."
+                },
+                "interactionRounds": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Maximum number of interaction rounds (model can click/scroll before summarizing)."
+                },
+                "interactionDelay": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 500,
+                    "description": "Milliseconds to wait after interactions for content to load."
+                },
+                "captchaMaxIterations": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 20,
+                    "description": "Maximum iterations for captcha solving."
+                }
+            }
+        },
+        "KagiWebProviderConfig": {
+            "type": "object",
+            "description": "Kagi web search provider configuration. Requires a session token from kagi.com.",
+            "properties": {
+                "sessionToken": {
+                    "type": "string",
+                    "description": "Session token from kagi.com authentication cookie. Can also be set via KAGI_SESSION_TOKEN environment variable."
+                },
+                "lenseId": {
+                    "type": "integer",
+                    "description": "Optional lens ID to filter results through a custom Kagi lens."
+                },
+                "maxResults": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Override maxResults for this provider specifically."
+                }
+            }
+        },
+        "DuckDuckGoWebProviderConfig": {
+            "type": "object",
+            "description": "DuckDuckGo web search provider configuration.",
+            "properties": {
+                "maxResults": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 10,
+                    "description": "Maximum number of search results to return."
+                }
+            }
+        },
+        "ProvidersConfig": {
+            "type": "object",
+            "description": "All provider-specific configurations. Keys match the SearchProvider type for easy lookup.",
+            "properties": {
+                "kagi-web": {
+                    "$ref": "#/definitions/KagiWebProviderConfig"
+                },
+                "duckduckgo-web": {
+                    "$ref": "#/definitions/DuckDuckGoWebProviderConfig"
+                }
+            },
+            "additionalProperties": false
+        }
+    }
+}

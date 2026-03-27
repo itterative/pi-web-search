@@ -1,0 +1,13 @@
+You have created <%~ it.checkpointCount %> checkpoints but haven't made progress since the last context compression.
+
+Please consolidate all your checkpoints into a single comprehensive summary that preserves all important information.
+
+Current checkpoints:
+<% it.checkpoints.forEach(function(cp, i) { %>
+### Checkpoint <%~ i + 1 %>. <%~ cp.title %>
+<%~ cp.content %><% if (i < it.checkpoints.length - 1) { %>
+
+---<% } %>
+<% }) %>
+
+Respond with a single consolidated summary in markdown format. Do not use any tools.

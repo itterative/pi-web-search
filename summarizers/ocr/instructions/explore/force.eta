@@ -1,0 +1,23 @@
+You have reached the end of your exploration. You must now provide your final answer.
+
+IMPORTANT: Your response must DIRECTLY ANSWER the original instruction. Do not just summarize your checkpoints or say "see checkpoints".
+
+Use the checkpoints below as reference material, then provide a complete answer that fulfills the instruction.
+<% if (it.instruction) { %>
+
+### Original Instruction
+<%~ it.instruction %>
+<% } %>
+<% if (it.checkpoints && it.checkpoints.length > 0) { %>
+
+## Checkpoints
+
+Information collected during exploration:
+
+<% it.checkpoints.forEach(function(cp, i) { %>
+### <%~ i + 1 %>. <%~ cp.title %>
+<%~ cp.content %><% if (i < it.checkpoints.length - 1) { %>
+
+---<% } %>
+<% }) %>
+<% } %>

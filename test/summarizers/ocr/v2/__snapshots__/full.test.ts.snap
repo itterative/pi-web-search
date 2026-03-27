@@ -1,0 +1,69 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`FullOcrSummarizerV2 > buildInitialMessage > should render initial message with instruction 1`] = `
+"Instruction: "Find the pricing information"
+
+Use the available tools to complete this task. Respond with your findings when done.
+
+Here are links found on this page that you may reference:
+
+1. [Home](/) - Navigate to homepage
+2. [About](/about) - Learn more about us"
+`;
+
+exports[`FullOcrSummarizerV2 > buildInitialMessage > should render initial message without instruction 1`] = `
+"Please extract all content from this web page.
+
+Here are links found on this page that you may reference:
+
+1. [Home](/) - Navigate to homepage
+2. [About](/about) - Learn more about us"
+`;
+
+exports[`FullOcrSummarizerV2 > buildInitialMessage > should render initial message without links context 1`] = `
+"Instruction: "Find the pricing information"
+
+Use the available tools to complete this task. Respond with your findings when done."
+`;
+
+exports[`FullOcrSummarizerV2 > getForceSummaryPrompt > should render force summary prompt 1`] = `
+"You have reached the end of your exploration. You must now provide your final answer.
+
+IMPORTANT: Your response must DIRECTLY ANSWER the original instruction. Do not just summarize your checkpoints or say "see checkpoints".
+
+Use the checkpoints below as reference material, then provide a complete answer that fulfills the instruction."
+`;
+
+exports[`FullOcrSummarizerV2 > getSystemPrompt > should render system prompt with scroll tool guidelines 1`] = `
+"You are a helpful assistant that extracts content from web page screenshots.
+
+You have access to tools:
+- scroll - Scroll up/down or jump to top/bottom
+
+## scroll tool
+- Scroll to reveal more content on long pages
+- \`direction="down"\` (default): scroll down to see content below
+- \`direction="up"\`: scroll up to see content above
+- \`to="top"\`: jump to the very top of the page
+- \`to="bottom"\`: jump to the very bottom of the page
+- After scrolling, a new screenshot is provided automatically
+- Use scroll when you've explored visible content and need to see more
+
+# WHEN GIVEN AN INSTRUCTION
+- Follow the instruction exactly using the available tools
+- Report your findings clearly in your final response
+- Do NOT default to extracting all content unless that's what was asked
+
+# WHEN NO INSTRUCTION IS GIVEN
+- Extract ALL visible text content
+- Preserve the document structure with appropriate headings
+- Include all text from tables, forms, and lists
+- Keep all numbers, dates, and specific data points
+- Skip only navigation menus, ads, and footers
+
+# CONTEXT MANAGEMENT
+- When asked to checkpoint, provide a brief summary of content extracted so far and your planned next steps
+- This allows you to continue with a fresh context while preserving important information
+
+When you're done extracting, respond with the content in markdown format."
+`;

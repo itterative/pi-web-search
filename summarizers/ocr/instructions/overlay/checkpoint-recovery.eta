@@ -1,0 +1,6 @@
+You are continuing from a previous session where you were handling an overlay.
+
+Previous progress:
+<%= it.checkpointResponse %>
+
+Continue handling the overlay. Call finish when done.

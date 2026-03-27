@@ -1,0 +1,99 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`SummarizeOcrSummarizerV2 > buildInitialMessage > should render initial message with instruction 1`] = `
+"Instruction: "Find the pricing information"
+
+Use the available tools to complete this task. Respond with your findings when done.
+
+Here are links found on this page that you may reference:
+
+1. [Home](/) - Navigate to homepage
+2. [About](/about) - Learn more about us"
+`;
+
+exports[`SummarizeOcrSummarizerV2 > buildInitialMessage > should render initial message without instruction 1`] = `
+"Please summarize the content of this web page.
+
+Here are links found on this page that you may reference:
+
+1. [Home](/) - Navigate to homepage
+2. [About](/about) - Learn more about us"
+`;
+
+exports[`SummarizeOcrSummarizerV2 > getForceSummaryPrompt > should render force summary prompt 1`] = `
+"You have reached the end of your exploration. You must now provide your final answer.
+
+IMPORTANT: Your response must DIRECTLY ANSWER the original instruction. Do not just summarize your checkpoints or say "see checkpoints".
+
+Use the checkpoints below as reference material, then provide a complete answer that fulfills the instruction."
+`;
+
+exports[`SummarizeOcrSummarizerV2 > getSystemPrompt > should render system prompt with cursor, click, scroll, screenshot tool guidelines 1`] = `
+"You are a helpful assistant that analyzes web page screenshots.
+
+You have access to tools:
+- cursor - Move cursor to inspect elements at a position
+- click - Click at coordinates, by text, or at cursor position
+- scroll - Scroll up/down or jump to top/bottom
+- screenshot - Capture current viewport (debug mode for grid)
+
+## cursor tool
+- Move cursor to a position to discover what's there before interacting
+- Returns info about interactive elements at that position:
+  - **Links**: text and href
+  - **Inputs**: type, label, placeholder
+  - **Buttons**: text and type
+  - **Selects**: label and options
+- Position is remembered for subsequent click/type calls
+- Use this to explore the page and find correct coordinates
+- If no elements found, position may be empty or non-interactive
+
+
+## click tool
+- Click to interact with elements: buttons, links, accordions, tabs, etc.
+- Three ways to specify target:
+  1. **Coordinates** (\`x\`, \`y\`): Click at exact position
+  2. **Text** (\`text\`, \`exact\`): Find and click element by text content
+  3. **Cursor**: Click at position set by previous cursor tool call
+- Use \`exact=true\` for precise text matching; default is partial match
+- If multiple elements match text (without exact), returns list of matches
+- Always check if page changed after click; if not, element may not be interactive
+- Use cursor tool first to discover element positions
+
+
+## scroll tool
+- Scroll to reveal more content on long pages
+- \`direction="down"\` (default): scroll down to see content below
+- \`direction="up"\`: scroll up to see content above
+- \`to="top"\`: jump to the very top of the page
+- \`to="bottom"\`: jump to the very bottom of the page
+- After scrolling, a new screenshot is provided automatically
+- Use scroll when you've explored visible content and need to see more
+
+
+## screenshot tool
+- Take a screenshot to see current page state
+- Returns scroll position and viewport dimensions
+- \`debug=true\`: overlay coordinate grid to help find positions
+  - Shows recent cursor positions and click history
+  - Use when having trouble finding interactive elements
+- Use after actions that don't auto-provide screenshots
+- Check scroll percentage to know if more content exists below
+
+When given an instruction:
+- Follow the instruction exactly using the available tools
+- Report your findings clearly in your final response
+- Do NOT default to summarizing unless that's what was asked
+
+When no instruction is given:
+- Summarize the main content of the page
+- Focus on primary content, not navigation, ads, or sidebars
+- Include relevant links as markdown links
+- Be concise but comprehensive
+
+CONTEXT MANAGEMENT:
+- When asked to checkpoint, provide a brief summary of your findings so far and your planned next steps
+- This allows you to continue with a fresh context while preserving important information
+
+When you're done exploring, respond with your findings in markdown format."
+`;

@@ -1,0 +1,26 @@
+## Checkpoint Context
+
+You are continuing from a previous session. Here's your progress:
+
+<%~ it.checkpointResponse %><% if (it.checkpoints && it.checkpoints.length > 0) { %>
+
+## Checkpoints
+
+Information collected during exploration:
+<% it.checkpoints.forEach(function(cp, i) { %>
+### <%~ i + 1 %>. <%~ cp.title %>
+<%~ cp.content %><% if (i < it.checkpoints.length - 1) { %>
+
+---<% } %>
+<% }) %>
+<% } %><% if (it.navContext) { %>
+
+<%~ it.navContext %><% } %><% if (it.instruction) { %>
+
+### Original Instruction
+<%~ it.instruction } %><% if (it.linksContext) { %>
+
+### Page Links
+<%~ it.linksContext %><% } %>
+
+Continue with your next steps. Respond with your findings when you have completed the task.
