@@ -53,17 +53,20 @@ Priority: environment variables > project config > global config > defaults
 
 ## Fetch Configuration
 
-| Option                 | Type    | Default | Description                                  |
-| ---------------------- | ------- | ------- | -------------------------------------------- |
-| `model.provider`       | string  | `""`    | LLM provider (e.g., `"anthropic"`)           |
-| `model.modelId`        | string  | `""`    | Model ID (e.g., `"claude-3-haiku-20240307"`) |
-| `useOcr`               | boolean | `false` | Enable OCR for image-based content           |
-| `screenshotWidth`      | number  | `720`   | Viewport width in pixels                     |
-| `screenshotMaxHeight`  | number  | `3000`  | Max screenshot height                        |
-| `maxContentLength`     | number  | `50000` | Max content length in chars                  |
-| `interactionRounds`    | number  | `0`     | Click/scroll rounds before summarizing       |
-| `interactionDelay`     | number  | `500`   | Delay after interactions (ms)                |
-| `captchaMaxIterations` | number  | `20`    | Max captcha solving iterations               |
+| Option                 | Type    | Default | Description                                         |
+| ---------------------- | ------- | ------- | --------------------------------------------------- |
+| `model.provider`       | string  | `""`    | LLM provider (e.g., `"anthropic"`)                  |
+| `model.modelId`        | string  | `""`    | Model ID (e.g., `"claude-3-haiku-20240307"`)        |
+| `useOcr`               | boolean | `false` | Enable OCR for image-based content                  |
+| `screenshotWidth`      | number  | `720`   | Viewport width in pixels (used as 1280 for OCR)     |
+| `screenshotMaxHeight`  | number  | `3000`  | Max screenshot height                               |
+| `maxContentLength`     | number  | `50000` | Max content length in chars                         |
+| `interactionRounds`    | number  | `0`     | Click/scroll rounds before summarizing              |
+| `interactionDelay`     | number  | `500`   | Delay after interactions (ms)                       |
+| `captchaMaxIterations` | number  | `20`    | Max captcha solving iterations                      |
+| `checkpointThreshold`  | number  | `0.6`   | Context usage threshold for checkpointing (0.0-1.0) |
+
+**Note**: When `useOcr` is true, the effective viewport width is `max(screenshotWidth, 1280)`. The `checkpointThreshold` default is 0.6 in the config, but the OCR summarizer uses 0.8 internally when not specified.
 
 ## Provider Configuration
 
@@ -83,24 +86,26 @@ To get your session token:
 
 ### DuckDuckGo (`duckduckgo-web`)
 
-| Option       | Type   | Required | Description               |
-| ------------ | ------ | -------- | ------------------------- |
-| `maxResults` | number | Yes      | Maximum results to return |
+| Option       | Type   | Required | Description                             |
+| ------------ | ------ | -------- | --------------------------------------- |
+| `maxResults` | number | No       | Maximum results to return (default: 10) |
 
 ## Environment Variables
 
-| Variable                       | Description                                      |
-| ------------------------------ | ------------------------------------------------ |
-| `KAGI_SESSION_TOKEN`           | Kagi authentication token                        |
-| `WEBSEARCH_PROVIDER`           | Override provider (`kagi-web`, `duckduckgo-web`) |
-| `WEBSEARCH_CONFIG_PATH`        | Custom project config path                       |
-| `WEBSEARCH_CONFIG_PATH_GLOBAL` | Custom global config path                        |
+| Variable                          | Description                                        |
+| --------------------------------- | -------------------------------------------------- |
+| `KAGI_SESSION_TOKEN`              | Kagi authentication token                          |
+| `WEBSEARCH_PROVIDER`              | Override provider (`kagi-web`, `duckduckgo-web`)   |
+| `WEBSEARCH_CONFIG_PATH`           | Custom project config path                         |
+| `WEBSEARCH_CONFIG_PATH_GLOBAL`    | Custom global config path                          |
+| `PI_WEB_SEARCH_DEBUG`             | Enable debug logging (`"1"` or `"true"`)           |
+| `PI_WEB_SEARCH_DEBUG_SCREENSHOTS` | Enable debug screenshot saving (`"1"` or `"true"`) |
+| `PI_WEB_SEARCH_DEBUG_DIR`         | Debug output directory (default: `"debug"`)        |
 
 ## Fetch Modes
 
-The `web-fetch` tool supports two modes:
+The `web-fetch` tool supports three modes:
 
 - **summarize** (default) - Returns an LLM-generated summary
 - **full** - Returns complete page content without summarization
-
-Optionally provide a `focus` parameter to guide summarization toward specific information.
+- **instruct** - Interactive exploration following a specific instruction (requires `instruction` parameter)

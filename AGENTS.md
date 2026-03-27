@@ -9,7 +9,7 @@
 
 ### Agent Guides
 
-- [agent/summarizer-v2-flow.md](./docs/agent/summarizer-v2-flow.md) - V2 summarizer main loop and flow
+- [agent/summarizer-flow.md](./docs/agent/summarizer-flow.md) - Summarizer main loop and flow
 - [agent/extension-lifecycle.md](./docs/agent/extension-lifecycle.md) - Extension hooks and lifecycle
 - [agent/tools-overview.md](./docs/agent/tools-overview.md) - Tool implementations and patterns
 - [agent/state-management.md](./docs/agent/state-management.md) - State types and positioning systems
