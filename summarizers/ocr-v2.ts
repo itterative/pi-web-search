@@ -232,7 +232,23 @@ export const ocrV2Summarizer: Summarizer = {
             throw new Error(`Configured model not found: ${provider}/${modelId}`);
         }
 
-        const apiKey = await ctx.modelRegistry.getApiKey(model);
+        let apiKey: string | undefined = undefined;
+        let headers: Record<string, string> | undefined = undefined;
+
+        try {
+            // before 0.63
+            // @ts-ignore
+            apiKey = await ctx.modelRegistry.getApiKey(model);
+        } catch (e) {
+            const apiKeyAndHeaders = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+
+            if (!apiKeyAndHeaders.ok) {
+                throw new Error("Failed to retrieve model key and headers");
+            }
+
+            apiKey = apiKeyAndHeaders.apiKey;
+            headers = apiKeyAndHeaders.headers;
+        }
 
         const width = config.fetch.screenshotWidth ?? 1280;
         const maxHeight = config.fetch.screenshotMaxHeight ?? 3000;
@@ -270,6 +286,7 @@ export const ocrV2Summarizer: Summarizer = {
             page,
             model,
             apiKey,
+            headers,
             width,
             maxHeight,
             maxRounds: mode === "instruct" ? Math.max(maxRounds, 10) : maxRounds,

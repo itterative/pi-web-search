@@ -17,6 +17,7 @@ export interface OcrSummarizerConfig {
 
     /** API key for the model */
     apiKey: string | undefined;
+    headers?: Record<string, string>;
 
     /** Template path for checkpoint extension (e.g., "explore", "full", "summarize") */
     templatePath?: string;
@@ -68,6 +69,7 @@ export function buildOcrConfig(config: OcrSummarizerConfig): OcrConfig {
         page: config.page,
         model: config.model,
         apiKey: config.apiKey,
+        headers: config.headers,
         templatePath: config.templatePath ?? "base",
         width: config.width ?? 1280,
         maxHeight: config.maxHeight ?? 800,

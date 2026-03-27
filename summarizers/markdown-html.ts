@@ -270,7 +270,23 @@ export const markdownHtmlSummarizer: Summarizer = {
             throw new Error(`Configured model not found: ${provider}/${modelId}`);
         }
 
-        const apiKey = await ctx.modelRegistry.getApiKey(model);
+        let apiKey: string | undefined = undefined;
+        let headers: Record<string, string> | undefined = undefined;
+
+        try {
+            // before 0.63
+            // @ts-ignore
+            apiKey = await ctx.modelRegistry.getApiKey(model);
+        } catch (e) {
+            const apiKeyAndHeaders = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+
+            if (!apiKeyAndHeaders.ok) {
+                throw new Error("Failed to retrieve model key and headers");
+            }
+
+            apiKey = apiKeyAndHeaders.apiKey;
+            headers = apiKeyAndHeaders.headers;
+        }
 
         const message = mode === "full" ? "Extracting full content..." : "Summarizing content...";
         onUpdate?.({ message });
@@ -298,7 +314,7 @@ export const markdownHtmlSummarizer: Summarizer = {
                     },
                 ],
             },
-            { apiKey, signal },
+            { apiKey, headers, signal },
         );
 
         // Extract text from response

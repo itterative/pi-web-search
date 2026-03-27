@@ -58,6 +58,7 @@ export interface OcrConfig {
 
     /** API key for the model */
     apiKey: string | undefined;
+    headers?: Record<string, string>;
 
     /** Screenshot width */
     width: number;
@@ -263,6 +264,7 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
 
         return await completeSimple(this.config.model, context, {
             apiKey: this.config.apiKey,
+            headers: this.config.headers,
             signal: options?.signal,
         });
     }
