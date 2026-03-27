@@ -5,7 +5,7 @@ import { OcrExtension, type OcrExtensionExecutionContext } from "./base";
 import { OVERLAY_VIEWPORT_WIDTH, OVERLAY_VIEWPORT_HEIGHT, captureScreenshot } from "../screenshot";
 import type { InteractionPositioning } from "../state";
 import type { OcrTool } from "../tools/base";
-import { ClickTool, CursorTool, ScreenshotTool, WaitTool } from "../tools";
+import { ClickTool, CursorTool, FindTool, ScreenshotTool, WaitTool } from "../tools";
 import { render } from "../instructions";
 
 /** Result of overlay handling */
@@ -136,6 +136,11 @@ export class OverlayExtension extends OcrExtension {
                 cursorExtension: init.cursorExtension,
                 positioning: this.positioning,
                 navigationExtension: init.navigationExtension,
+            }),
+            new FindTool({
+                page: this.page,
+                config: init.interaction,
+                positioning: this.positioning,
             }),
             new ScreenshotTool({
                 page: this.page,
@@ -368,7 +373,7 @@ export class OverlayExtension extends OcrExtension {
                 {
                     type: "text",
                     text:
-                        "Overlay detected. Use your normal tools (click, cursor, screenshot, wait, etc.) to dismiss it. " +
+                        "Overlay detected. Use your normal tools (click, cursor, find, screenshot, wait, etc.) to dismiss it. " +
                         "When the overlay is gone, call dismiss-overlay with status='success'. " +
                         "If it cannot be dismissed, call dismiss-overlay with status='failure'.",
                 },
