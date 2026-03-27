@@ -579,6 +579,10 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
     }
 
     private createLogger(state: OcrBaseState<TCustom>, options: OcrRunOptions) {
+        if (process.env.PI_WEB_SEARCH_DEBUG !== "1" && process.env.PI_WEB_SEARCH_DEBUG !== "true") {
+            return (msg: string) => {};
+        }
+
         let currentMessages = -1;
         let currentLog: string = "";
 
