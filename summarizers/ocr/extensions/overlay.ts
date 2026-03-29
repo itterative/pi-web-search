@@ -1,11 +1,11 @@
-import type { Message, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Message, Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import type { Page } from "puppeteer";
 
 import { OcrExtension, type OcrExtensionExecutionContext } from "./base";
 import { OVERLAY_VIEWPORT_WIDTH, OVERLAY_VIEWPORT_HEIGHT, captureScreenshot } from "../screenshot";
 import type { InteractionPositioning } from "../state";
 import type { OcrTool } from "../tools/base";
-import { ClickTool, CursorTool, FindTool, ScreenshotTool, WaitTool } from "../tools";
+import { ClickTool, CursorTool, FindTool, ScreenshotTool, WaitTool, ReportOverlayResultTool } from "../tools";
 import { render } from "../instructions";
 
 /** Result of overlay handling */
@@ -148,6 +148,7 @@ export class OverlayExtension extends OcrExtension {
                 cursorExtension: init.cursorExtension,
             }),
             new WaitTool({ config: init.interaction }),
+            new ReportOverlayResultTool(),
         ];
     }
 
@@ -176,33 +177,45 @@ export class OverlayExtension extends OcrExtension {
     // --- Tools ---
 
     /**
-     * Get the overlay handling tools. Used by OcrBase.buildContext to
-     * conditionally include them.
+     * Filter tool definitions sent to the model during handling mode.
+     * Removes the idle-mode dismiss-overlay tool and adds handling-mode tools
+     * (including ReportOverlayResultTool).
      */
-    getHandlingTools(): OcrTool<any>[] {
-        return this.handlingTools;
+    async onFilterTools(ctx: OcrExtensionExecutionContext, tools: Tool[]): Promise<Tool[]> {
+        if (ctx.state.overlay.mode !== "handling") return tools;
+        return [...tools.filter((t) => t.name !== "dismiss-overlay"), ...this.handlingTools.map((t) => t.tool)];
+    }
+
+    /**
+     * Filter executable tools during handling mode.
+     * Removes the idle-mode dismiss-overlay tool and adds handling-mode tools
+     * (including ReportOverlayResultTool).
+     */
+    async onFilterExecutionTools(ctx: OcrExtensionExecutionContext, tools: OcrTool<any>[]): Promise<OcrTool<any>[]> {
+        if (ctx.state.overlay.mode !== "handling") return tools;
+        return [...tools.filter((t) => t.tool.name !== "dismiss-overlay"), ...this.handlingTools];
     }
 
     // --- Lifecycle hooks ---
 
     /**
-     * Enter overlay handling mode when the model calls dismiss-overlay without a status.
-     * Exit handling mode when the model calls dismiss-overlay with a status.
-     * Guard against re-entering handling mode (issue 3).
+     * Dispatch dismiss-overlay calls based on current mode.
+     * In handling mode, the call must be the report variant (status is required by schema).
+     * Outside handling mode, the call must be the idle variant (description only).
      */
     async onToolCall(ctx: OcrExtensionExecutionContext, toolCall: ToolCall): Promise<ToolResultMessage | undefined> {
         if (toolCall.name !== "dismiss-overlay") {
             return undefined;
         }
 
-        const args = toolCall.arguments as { description?: string; status?: "success" | "failure"; message?: string };
-
-        // Second call: model is reporting the result
-        if (args.status !== undefined) {
+        if (ctx.state.overlay.mode === "handling") {
+            // Must be the report variant — status is required by schema
+            const args = toolCall.arguments as { status: "success" | "failure"; message?: string };
             return this.handleStatusReport(ctx, args);
         }
 
-        // First call: enter handling mode
+        // Must be the idle variant — description only
+        const args = toolCall.arguments as { description?: string };
         return this.enterHandlingMode(ctx, toolCall, args);
     }
 

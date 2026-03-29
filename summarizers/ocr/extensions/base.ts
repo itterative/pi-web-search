@@ -1,8 +1,9 @@
-import type { Message, ToolCall, ToolResultMessage, AssistantMessage } from "@mariozechner/pi-ai";
+import type { Message, Tool, ToolCall, ToolResultMessage, AssistantMessage } from "@mariozechner/pi-ai";
 import type { SummarizerProgressUpdate } from "../../base";
 import type { OcrRunOptions } from "../config";
 import type { CheckpointState } from "./checkpoint";
 import type { OverlayState } from "./overlay";
+import type { OcrTool } from "../tools/base";
 
 /**
  * Shared state fields managed by the OCR base class.
@@ -214,6 +215,20 @@ export interface OcrExtensionHooks<TState extends OcrBaseStateInterface> {
     onComplete?(ctx: OcrExtensionExecutionContext<TState>): Promise<void>;
 
     /**
+     * Called before building the API context (tool definitions sent to the model).
+     * Extensions can filter, replace, or add tool definitions.
+     * Receives the current tool definition list, returns the modified list.
+     */
+    onFilterTools?(ctx: OcrExtensionExecutionContext<TState>, tools: Tool[]): Promise<Tool[]>;
+
+    /**
+     * Called before executing tool calls (tools with execute()).
+     * Extensions can filter, replace, or add executable tools.
+     * Receives the current tool list, returns the modified list.
+     */
+    onFilterExecutionTools?(ctx: OcrExtensionExecutionContext<TState>, tools: OcrTool<any>[]): Promise<OcrTool<any>[]>;
+
+    /**
      * Called whenever messages are appended, replaced, or truncated.
      * Useful for debugging and tracking message flow.
      */
@@ -307,5 +322,14 @@ export abstract class OcrExtension<TState extends OcrBaseStateInterface = OcrBas
     }
     onMessagesChanged?(_ctx: OcrExtensionExecutionContext<TState>, _change: MessageChange): Promise<void> {
         return Promise.resolve();
+    }
+    onFilterTools?(_ctx: OcrExtensionExecutionContext<TState>, tools: Tool[]): Promise<Tool[]> {
+        return Promise.resolve(tools);
+    }
+    onFilterExecutionTools?(
+        _ctx: OcrExtensionExecutionContext<TState>,
+        tools: OcrTool<any>[],
+    ): Promise<OcrTool<any>[]> {
+        return Promise.resolve(tools);
     }
 }

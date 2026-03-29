@@ -38,14 +38,14 @@ exports[`FullOcrSummarizerV2 > getSystemPrompt > should render system prompt wit
 "You are a helpful assistant that extracts content from web page screenshots.
 
 You have access to tools:
-- dismiss-overlay - Dismiss a popup, cookie banner, captcha, or other overlay blocking the page. Call without status to start, call with status='success'/'failure' to report result.
+- dismiss-overlay - Dismiss a popup, cookie banner, captcha, or other overlay blocking the page. Call to enter handling mode and receive tools for dismissing the overlay.
 - scroll - Scroll up/down or jump to top/bottom
 
 ## dismiss-overlay tool
-- Call WITHOUT status when you see an overlay to enter handling mode
+- Call when you see an overlay (popup, cookie banner, captcha, etc.) blocking page content
 - You will receive a screenshot and can use your normal tools (click, cursor, screenshot, wait) to dismiss the overlay
-- Call WITH status='success' when the overlay is gone and the main content is visible
-- Call WITH status='failure' if the overlay cannot be dismissed
+- When the overlay is gone, call dismiss-overlay with status='success'
+- If the overlay cannot be dismissed, call dismiss-overlay with status='failure'
 - If dismissal fails, summarize whatever content is visible
 - After successful dismissal, take a screenshot to verify before continuing your main task
 

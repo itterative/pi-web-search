@@ -17,6 +17,7 @@ export { CheckpointTool } from "./checkpoint";
 export { ClickTool } from "./click";
 export { CursorTool } from "./cursor";
 export { DismissOverlayTool } from "./dismiss-overlay";
+export { ReportOverlayResultTool } from "./report-overlay-result";
 export { FindTool } from "./find";
 export { KeyboardTool } from "./keyboard";
 export { NavigateTool } from "./navigate";

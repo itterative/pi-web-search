@@ -114,7 +114,6 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
     private readonly tools: OcrTool<any>[];
 
     /** Extension references (for subclass access) */
-    protected readonly overlayExtension: OverlayExtension | undefined;
     protected readonly cursorExtension: CursorExtension;
     protected readonly navigationExtension: NavigationExtension;
     protected readonly checkpointExtension: CheckpointExtension;
@@ -148,7 +147,7 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
         this.navigationExtension = this.registerExtension(new NavigationExtension({ page: this.config.page }));
 
         if (overlayConfig.enabled) {
-            this.overlayExtension = this.registerExtension(
+            this.registerExtension(
                 new OverlayExtension({
                     page: this.config.page,
                     positioning: this.config.positioning,
@@ -375,7 +374,7 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
             maxRounds: this.config.maxRounds + 1,
         });
 
-        const response = await this.complete(extCtx, this.buildContext(extCtx), {
+        const response = await this.complete(extCtx, await this.buildContext(extCtx), {
             signal,
         });
 
@@ -479,11 +478,8 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
     ): Promise<ToolResultMessage[]> {
         const results: ToolResultMessage[] = [];
 
-        // Build combined tool list including extension tools
-        const allTools = [...this.tools];
-        if (this.overlayExtension && extCtx.state.overlay.mode === "handling") {
-            allTools.push(...this.overlayExtension.getHandlingTools());
-        }
+        // Build combined tool list (extensions can filter/replace/add tools)
+        const allTools = await this.registry.dispatchOnFilterExecutionTools(extCtx, [...this.tools]);
 
         for (const tc of toolCalls) {
             const toolContext: OcrToolExecutionContext = {
@@ -524,7 +520,7 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
             timestamp: Date.now(),
         });
 
-        const response = await this.complete(extCtx, this.buildContext(extCtx), {
+        const response = await this.complete(extCtx, await this.buildContext(extCtx), {
             signal,
         });
 
@@ -662,17 +658,17 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
         };
     }
 
-    private buildContext(extCtx: OcrExtensionExecutionContext<OcrBaseState<TCustom>>): Context {
-        // Collect extension tools (e.g., overlay handling tools during handling mode)
-        const extensionTools: OcrTool<any>[] = [];
-        if (this.overlayExtension && extCtx.state.overlay.mode === "handling") {
-            extensionTools.push(...this.overlayExtension.getHandlingTools());
-        }
+    private async buildContext(extCtx: OcrExtensionExecutionContext<OcrBaseState<TCustom>>): Promise<Context> {
+        // Let extensions filter/replace/add tool definitions (e.g., overlay handling tools)
+        const filteredToolDefs = await this.registry.dispatchOnFilterTools(
+            extCtx,
+            this.tools.map((t) => t.tool),
+        );
 
         return {
             systemPrompt: this.getSystemPrompt(),
             messages: extCtx.state.base.messages,
-            tools: [...this.tools.map((t) => t.tool), ...extensionTools.map((t) => t.tool)],
+            tools: filteredToolDefs,
         };
     }
 }

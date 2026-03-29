@@ -1,4 +1,4 @@
-import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Message, Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 
 import type {
     MessageChange,
@@ -8,6 +8,7 @@ import type {
     OcrBaseStateInterface,
 } from "./base";
 import type { OcrRunOptions } from "../config";
+import type { OcrTool } from "../tools/base";
 
 /**
  * Options for registering an extension.
@@ -230,5 +231,34 @@ export class OcrExtensionRegistry<TState extends OcrBaseStateInterface = OcrBase
         for (const ext of this.extensions) {
             await ext.onMessagesChanged?.(ctx as OcrExtensionExecutionContext<OcrBaseStateInterface>, change);
         }
+    }
+
+    async dispatchOnFilterTools(ctx: OcrExtensionExecutionContext<TState>, tools: Tool[]): Promise<Tool[]> {
+        let filtered = tools;
+        for (const ext of this.extensions) {
+            if (ext.onFilterTools) {
+                filtered = await ext.onFilterTools(
+                    ctx as OcrExtensionExecutionContext<OcrBaseStateInterface>,
+                    filtered,
+                );
+            }
+        }
+        return filtered;
+    }
+
+    async dispatchOnFilterExecutionTools(
+        ctx: OcrExtensionExecutionContext<TState>,
+        tools: OcrTool<any>[],
+    ): Promise<OcrTool<any>[]> {
+        let filtered = tools;
+        for (const ext of this.extensions) {
+            if (ext.onFilterExecutionTools) {
+                filtered = await ext.onFilterExecutionTools(
+                    ctx as OcrExtensionExecutionContext<OcrBaseStateInterface>,
+                    filtered,
+                );
+            }
+        }
+        return filtered;
     }
 }

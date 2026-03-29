@@ -2,7 +2,7 @@
 
 ## Quick Overview
 
-Extensions hook into the interaction loop at 13 specific points. Implement only what you need.
+Extensions hook into the interaction loop at 15 specific points. Implement only what you need.
 
 ## Hook Timeline
 
@@ -13,18 +13,20 @@ Extensions hook into the interaction loop at 13 specific points. Implement only 
 
 [ROUND LOOP] (repeated maxRounds times)
   3. onRoundStart() → Skip round? request checkpoint?
-  4. onBeforeCompletion() → Modify messages before API
-  5. onResponse() → Handle response (compression, checkpoints)
-  6. onToolCall() → Intercept tool?
-  7. onToolResult() → Modify result in place
-  8. onToolResultsComplete() → Batch ops
-  9. onRoundEnd() → Trigger compression, save debug data
+  4. onFilterTools() → Filter/replace/add tool definitions before API call
+  5. onBeforeCompletion() → Modify messages before API
+  6. onResponse() → Handle response (compression, checkpoints)
+  7. onFilterExecutionTools() → Filter/replace/add executable tools before execution
+  8. onToolCall() → Intercept tool?
+  9. onToolResult() → Modify result in place
+  10. onToolResultsComplete() → Batch ops
+  11. onRoundEnd() → Trigger compression, save debug data
 
 [END]
-  10. onFinalSummary() → Before final summary
-  11. onComplete() → After completion
-  12. onError() → On error (cleanup)
-  13. onMessagesChanged() → On message changes (debug/tracking)
+  12. onFinalSummary() → Before final summary
+  13. onComplete() → After completion
+  14. onError() → On error (cleanup)
+  15. onMessagesChanged() → On message changes (debug/tracking)
 ```
 
 **Note**: `onInit` exists on the `OcrExtension` base class but is **not dispatched** by `OcrBase.run()`. Use `onBeforeRun` or `getInitialState` for initialization.
@@ -200,6 +202,7 @@ class MyExtension extends OcrExtension {
 | Pattern                  | Hook                                       | Use Case                                             |
 | ------------------------ | ------------------------------------------ | ---------------------------------------------------- |
 | Captcha/overlay handling | `onToolCall`                               | Intercept dismiss-overlay, manage sub-conversation   |
+| Tool schema swapping     | `onFilterTools`, `onFilterExecutionTools`  | Replace tools based on mode (e.g., overlay handling) |
 | Screenshot filling       | `onToolResult`                             | Replace placeholder images with real screenshots     |
 | Cursor tracking          | `onToolResult`                             | Update cursor position after click                   |
 | Context compression      | `onRoundStart`, `onResponse`, `onRoundEnd` | Multi-phase checkpoint/compression cycle             |

@@ -15,7 +15,7 @@
 | `wait`            | Wait             | `seconds?`                                    |
 | `checkpoint`      | Save progress    | `title`, `content`                            |
 | `zoom`            | Zoom area        | `x`, `y`, `width`, `height`, `level`          |
-| `dismiss-overlay` | Dismiss overlays | `description?`, `status?`, `message?`         |
+| `dismiss-overlay` | Dismiss overlays | `description?`                                 |
 
 ## Tool Availability by Mode
 
@@ -209,16 +209,24 @@ When navigation is detected (URL change), `NavigationExtension`:
 
 ## dismiss-overlay Tool
 
-This tool is special - its `execute()` method throws an error because it's always intercepted by `OverlayExtension.onToolCall`:
+This tool is special — it exists as two separate tool classes that share the same name (`dismiss-overlay`). Only one is present in the tool list at a time, controlled by `OverlayExtension`'s `onFilterTools`/`onFilterExecutionTools` hooks:
 
-- **Without `status`**: Enter overlay handling mode (push messages, start sub-conversation)
-- **With `status="success"`**: Exit handling mode (pop messages, restore viewport)
-- **With `status="failure"`**: Exit handling mode with error
+**`DismissOverlayTool`** (idle mode):
+- Parameters: `description?`
+- Visible in the main conversation
+- Calling it enters overlay handling mode
 
-The tool definition exists only to:
+**`ReportOverlayResultTool`** (handling mode):
+- Parameters: `status` (required), `message?`
+- Only visible during overlay handling mode
+- Calling it exits handling mode with the reported result
+
+Both tools' `execute()` methods throw errors because they're always intercepted by `OverlayExtension.onToolCall`. The tool definitions exist only to:
 
 1. Register the tool schema so the model knows about it
 2. Provide `promptSnippet` and `promptGuidelines` for the system prompt
+
+This two-variant approach prevents the model from calling with `status` outside handling mode — the parameter doesn't exist in the schema it sees.
 
 ## Prompt Guidelines
 
