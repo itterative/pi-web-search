@@ -313,6 +313,9 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
         const extCtx = this.buildExtensionContext(options);
 
         try {
+            // Initialize extensions (reset per-run state)
+            await this.registry.dispatchOnInit(extCtx);
+
             // Let extensions modify options before run starts (e.g., overlay handling)
             await this.registry.dispatchOnBeforeRun(extCtx, options);
 
