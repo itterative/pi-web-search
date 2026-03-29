@@ -29,7 +29,7 @@ Extensions hook into the interaction loop at 15 specific points. Implement only 
   15. onMessagesChanged() → On message changes (debug/tracking)
 ```
 
-**Note**: `onInit` exists on the `OcrExtension` base class but is **not dispatched** by `OcrBase.run()`. Use `onBeforeRun` or `getInitialState` for initialization.
+**Note**: `onInit` is dispatched by `OcrBase.run()` after building the extension context. It is called once per run, before `onBeforeRun`. Use it to reset per-run state. Extensions are reused across runs, so state must be reset in `onInit` or `getInitialState`.
 
 ## Key Hooks
 
@@ -214,9 +214,9 @@ class MyExtension extends OcrExtension {
 
 `OcrBase` registers these extensions in the constructor:
 
-1. **CursorExtension** - Cursor state tracking
-2. **NavigationExtension** - Page history and navigation context
-3. **OverlayExtension** (if enabled) - Captcha/overlay handling + `dismiss-overlay` tool
-4. **DebugExtension** - Debug screenshots and conversation logging
-5. **ScreenshotExtension** - Fills screenshot placeholders in tool results
-6. **CheckpointExtension** - Context compression via checkpoints
+1. **CursorExtension** - Cursor state tracking (`onInit`, `onToolCall`, `onToolResult`)
+2. **NavigationExtension** - Page history and navigation context (`onInit`, `onToolCall`, `onToolResult`)
+3. **OverlayExtension** (if enabled) - Captcha/overlay handling + `dismiss-overlay` tool (`onToolCall`, `onRoundStart`, `onBeforeCompletion`, `onFilterTools`, `onFilterExecutionTools`, `onError`)
+4. **DebugExtension** - Debug screenshots and conversation logging (`onInit`, `onToolCall`, `onToolResult`, `onRoundEnd`, `onError`, `onComplete`, `onMessagesChanged`)
+5. **ScreenshotExtension** - Fills screenshot placeholders in tool results (`onToolResult`, `onBeforeCompletion`)
+6. **CheckpointExtension** - Context compression via checkpoints (`onRoundStart`, `onToolCall`, `onToolResultsComplete`, `onRoundEnd`, `onResponse`)

@@ -175,14 +175,14 @@ Tools are Puppeteer-based actions that the LLM can invoke:
 
 Extensions hook into the interaction lifecycle:
 
-| Extension             | Purpose                      | Key Hooks                                                                                          |
-| --------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------- |
-| `CursorExtension`     | Manage cursor state          | `onInit`, `onToolCall`, `onToolResult`                                                             |
-| `NavigationExtension` | Track page history           | `onInit`, `onToolCall`, `onToolResult`                                                             |
-| `OverlayExtension`    | Handle captchas/overlays     | `onToolCall`, `onRoundStart`, `onBeforeCompletion`, `onError`                                      |
-| `ScreenshotExtension` | Fill screenshot placeholders | `onToolResult`, `onBeforeCompletion`                                                               |
-| `DebugExtension`      | Debug screenshots/logging    | `onInit`, `onToolCall`, `onToolResult`, `onRoundEnd`, `onError`, `onComplete`, `onMessagesChanged` |
-| `CheckpointExtension` | Context compression          | `onRoundStart`, `onToolCall`, `onToolResultsComplete`, `onRoundEnd`, `onResponse`                  |
+| Extension             | Purpose                      | Key Hooks                                                                                                |
+| --------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `CursorExtension`     | Manage cursor state          | `onInit`, `onToolCall`, `onToolResult`                                                                   |
+| `NavigationExtension` | Track page history           | `onInit`, `onToolCall`, `onToolResult`                                                                   |
+| `OverlayExtension`    | Handle captchas/overlays     | `onToolCall`, `onRoundStart`, `onBeforeCompletion`, `onFilterTools`, `onFilterExecutionTools`, `onError` |
+| `ScreenshotExtension` | Fill screenshot placeholders | `onToolResult`, `onBeforeCompletion`                                                                     |
+| `DebugExtension`      | Debug screenshots/logging    | `onInit`, `onToolCall`, `onToolResult`, `onRoundEnd`, `onError`, `onComplete`, `onMessagesChanged`       |
+| `CheckpointExtension` | Context compression          | `onRoundStart`, `onToolCall`, `onToolResultsComplete`, `onRoundEnd`, `onResponse`                        |
 
 ### 3. Configuration (`common/config.ts`)
 
@@ -269,7 +269,7 @@ Extensions implement hooks that fire at specific points:
 | `onError()`               | On error               | Cleanup (e.g., pop overlay messages)                            |
 | `onMessagesChanged()`     | On message changes     | Debug/tracking (push/pop/replace/append/truncate)               |
 
-**Note**: `onInit` exists on the `OcrExtension` base class but is **not dispatched** by `OcrBase.run()`. Some extensions implement it but it won't be called in the current architecture. Use `onBeforeRun` or `getInitialState` for initialization instead.
+**Note**: `onInit` is dispatched by `OcrBase.run()` after building the extension context, before `onBeforeRun`. Use it to reset per-run state. Extensions are reused across runs, so state must be reset in `onInit` or `getInitialState`.
 
 ### Message Management
 
