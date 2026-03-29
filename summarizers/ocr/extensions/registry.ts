@@ -160,9 +160,10 @@ export class OcrExtensionRegistry<TState extends OcrBaseStateInterface = OcrBase
 
         for (const ext of this.extensions) {
             const result = await ext.onToolCall?.(ctx as OcrExtensionExecutionContext<OcrBaseStateInterface>, toolCall);
-            // First extension to return a ToolResultMessage wins
+            // First extension to return a ToolResultMessage wins - stop dispatching
             if (result && typeof result === "object" && "role" in result && result.role === "toolResult") {
                 interceptedResult = result;
+                break;
             }
         }
 
