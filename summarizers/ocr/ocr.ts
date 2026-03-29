@@ -441,27 +441,7 @@ export abstract class OcrBase<TCustom = object> implements CheckpointCompression
                 return false;
             }
             // No tool calls - model is done
-            return true; // Break out of loop
-        }
-
-        // Check if we're in compression mode - only allow checkpoint tool
-        if (extCtx.state.checkpoint.compression.inCompressionMode) {
-            const nonCheckpointTools = toolCalls.filter((tc) => tc.name !== "checkpoint");
-            if (nonCheckpointTools.length > 0) {
-                // Model tried to use non-checkpoint tools during compression - add a message and continue
-                extCtx.state.base.messages.push({
-                    role: "user",
-                    content: [
-                        {
-                            type: "text",
-                            text: "Tools are not available right now. Please provide a text summary of your progress.",
-                        },
-                    ],
-                    timestamp: Date.now(),
-                });
-                return false; // Continue to next round
-            }
-            // Only checkpoint tool(s) - let them process normally
+            return true;
         }
 
         // Process tool calls
