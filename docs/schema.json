@@ -106,6 +106,25 @@
                     "minimum": 1,
                     "default": 20,
                     "description": "Maximum iterations for captcha solving."
+                },
+                "checkpointThreshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "default": 0.6,
+                    "description": "Context usage threshold for checkpointing (0.0-1.0)."
+                },
+                "outlineThreshold": {
+                    "type": "integer",
+                    "minimum": 1000,
+                    "default": 30000,
+                    "description": "Character threshold to trigger outline-based selection for large pages. When extracted content exceeds this length, the markdown-html summarizer uses a two-phase approach: extract a structural outline, let the model select relevant sections, then process only those sections."
+                },
+                "maxSelectionRetries": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 3,
+                    "description": "Maximum retries for model section selection JSON parsing when using outline-based large page handling."
                 }
             }
         },

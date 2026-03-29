@@ -45,7 +45,11 @@ pi-web-search/
 ├── summarizers/                # Content summarizer implementations
 │   ├── base.ts                # Summarizer interface + registry
 │   ├── index.ts               # Summarizer registration and selection
-│   ├── markdown-html.ts       # Markdown/HTML summarizer
+│   ├── markdown-html.ts       # Markdown/HTML summarizer (with outline-based large page handling)
+│   ├── outline/               # Outline-based selection for large pages
+│   │   ├── extract.ts         # extractOutline(), extractSelectedContent()
+│   │   ├── select.ts          # Model selection call + JSON parsing + retry
+│   │   └── instructions/      # Eta templates for outline prompts
 │   ├── ocr-v2.ts              # OCR V2 Summarizer interface adapter
 │   └── ocr/                   # V2 OCR summarizer core
 │       ├── config.ts          # OcrRunOptions type

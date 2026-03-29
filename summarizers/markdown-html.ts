@@ -1,10 +1,12 @@
 import { complete } from "@mariozechner/pi-ai";
+import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { Page } from "puppeteer";
 
 import websearchConfig from "../common/config";
 
 import type { ContentType, Summarizer, SummarizerMode, SummarizerResult, SummarizerUpdateCallback } from "./base";
+import { extractOutline, extractSelectedContent, selectSections } from "./outline";
 
 /**
  * Result of fetching raw content from a page.
@@ -151,6 +153,9 @@ export async function extractRawContent(page: Page): Promise<RawContentResult> {
     return result;
 }
 
+/** Default character threshold for outline-based flow */
+const DEFAULT_OUTLINE_THRESHOLD = 30000;
+
 /** System prompts for different modes */
 const MARKDOWN_FULL_PROMPT = `You are a helpful assistant that extracts and cleans web page content.
 
@@ -191,10 +196,41 @@ async function isHtmlContent(page: Page): Promise<boolean> {
 }
 
 /**
+ * Get API key and headers for a model, handling both old and new API.
+ */
+async function getModelCredentials(
+    ctx: ExtensionContext,
+    model: Model<Api>,
+): Promise<{ apiKey: string; headers: Record<string, string> | undefined }> {
+    let apiKey: string | undefined;
+    let headers: Record<string, string> | undefined;
+
+    try {
+        // @ts-ignore - before 0.63
+        apiKey = await ctx.modelRegistry.getApiKey(model);
+    } catch {
+        const apiKeyAndHeaders = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+
+        if (!apiKeyAndHeaders.ok) {
+            throw new Error("Failed to retrieve model key and headers");
+        }
+
+        apiKey = apiKeyAndHeaders.apiKey;
+        headers = apiKeyAndHeaders.headers;
+    }
+
+    return { apiKey: apiKey!, headers };
+}
+
+/**
  * HTML-to-markdown summarizer.
  * - "full" mode: Uses LLM to extract and clean all main content (no summarization)
  * - "summarize" mode: Uses LLM to summarize extracted content
  * - "instruct" mode: Uses LLM to follow instructions on extracted content
+ *
+ * For large pages (exceeding outlineThreshold chars), uses a two-phase approach:
+ * Phase 1: Extract structural outline, model selects relevant sections
+ * Phase 2: Extract selected content and process with LLM
  */
 export const markdownHtmlSummarizer: Summarizer = {
     id: "markdown-html",
@@ -270,22 +306,30 @@ export const markdownHtmlSummarizer: Summarizer = {
             throw new Error(`Configured model not found: ${provider}/${modelId}`);
         }
 
-        let apiKey: string | undefined = undefined;
-        let headers: Record<string, string> | undefined = undefined;
+        const { apiKey, headers } = await getModelCredentials(ctx, model);
 
-        try {
-            // before 0.63
-            // @ts-ignore
-            apiKey = await ctx.modelRegistry.getApiKey(model);
-        } catch (e) {
-            const apiKeyAndHeaders = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+        const outlineThreshold = config.fetch.outlineThreshold ?? DEFAULT_OUTLINE_THRESHOLD;
 
-            if (!apiKeyAndHeaders.ok) {
-                throw new Error("Failed to retrieve model key and headers");
-            }
+        // Determine content to process
+        let contentToProcess: string;
 
-            apiKey = apiKeyAndHeaders.apiKey;
-            headers = apiKeyAndHeaders.headers;
+        if (rawContent.content.length > outlineThreshold) {
+            // Large page: use two-phase outline + select approach
+            contentToProcess = await handleLargePage(
+                page,
+                rawContent,
+                mode,
+                instruction,
+                model,
+                apiKey,
+                headers,
+                config.fetch.maxSelectionRetries,
+                onUpdate,
+                signal,
+            );
+        } else {
+            // Small/medium page: use existing single-call flow
+            contentToProcess = rawContent.content;
         }
 
         const message = mode === "full" ? "Extracting full content..." : "Summarizing content...";
@@ -299,8 +343,8 @@ export const markdownHtmlSummarizer: Summarizer = {
                   : MARKDOWN_SUMMARIZE_PROMPT;
 
         const userContent = instruction
-            ? `Instruction: "${instruction}"\n\nPage content:\n\n# ${rawContent.title}\n\nURL: ${rawContent.url}\n\n${rawContent.content}`
-            : `# ${rawContent.title}\n\nURL: ${rawContent.url}\n\n${rawContent.content}`;
+            ? `Instruction: "${instruction}"\n\nPage content:\n\n# ${rawContent.title}\n\nURL: ${rawContent.url}\n\n${contentToProcess}`
+            : `# ${rawContent.title}\n\nURL: ${rawContent.url}\n\n${contentToProcess}`;
 
         const response = await complete(
             model,
@@ -333,3 +377,65 @@ export const markdownHtmlSummarizer: Summarizer = {
         };
     },
 };
+
+/**
+ * Handle a large page using the two-phase outline + select approach.
+ * Returns the concatenated content of selected sections.
+ */
+async function handleLargePage(
+    page: Page,
+    rawContent: RawContentResult,
+    mode: SummarizerMode,
+    instruction: string | undefined,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    model: Model<Api>,
+    apiKey: string,
+    headers: Record<string, string> | undefined,
+    maxRetries: number | undefined,
+    onUpdate?: SummarizerUpdateCallback,
+    signal?: AbortSignal,
+): Promise<string> {
+    onUpdate?.({ message: "Large page detected — extracting structural outline..." });
+
+    // Phase 1: Extract outline
+    const entries = await extractOutline(page);
+
+    if (entries.length === 0) {
+        // No qualifying nodes found — fall back to truncation
+        onUpdate?.({ message: "Could not extract outline — truncating content" });
+        return rawContent.content.slice(0, 60000);
+    }
+
+    onUpdate?.({ message: `Outline extracted (${entries.length} sections) — selecting relevant sections...` });
+
+    // Phase 2: Model selects relevant entries
+    const selectedEntries = await selectSections(
+        entries,
+        mode,
+        instruction,
+        model,
+        apiKey,
+        headers,
+        maxRetries,
+        onUpdate,
+        signal,
+    );
+
+    if (selectedEntries.length === 0) {
+        // Model selected zero entries — use truncated content
+        onUpdate?.({ message: "No sections selected — using truncated content" });
+        return rawContent.content.slice(0, 60000);
+    }
+
+    onUpdate?.({ message: `Selected ${selectedEntries.length} sections — extracting content...` });
+
+    // Phase 3: Extract selected content
+    let selectedContent = await extractSelectedContent(page, selectedEntries);
+
+    // Safety: if still too large, truncate
+    if (selectedContent.length > 120000) {
+        selectedContent = selectedContent.slice(0, 120000);
+    }
+
+    return selectedContent;
+}

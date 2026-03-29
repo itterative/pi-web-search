@@ -102,6 +102,10 @@ export interface FetchConfig {
     captchaMaxIterations?: number;
     /** Context usage threshold for checkpointing (0.0-1.0, default: 0.8) */
     checkpointThreshold?: number;
+    /** Character threshold to trigger outline-based selection (default: 30000) */
+    outlineThreshold?: number;
+    /** Max retries for model section selection JSON parsing (default: 3) */
+    maxSelectionRetries?: number;
 }
 
 /**
