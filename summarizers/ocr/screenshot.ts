@@ -61,13 +61,19 @@ export interface GridOverlayOptions {
  * @returns Screenshot data with dimensions
  */
 export async function takeScreenshot(page: Page, options?: ScreenshotOptions): Promise<ScreenshotResult> {
-    // Get current scroll position and body height
-    const { scrollY, bodyWidth, bodyHeight, devicePixelRatio } = await page.evaluate(() => ({
-        scrollY: window.scrollY,
-        bodyWidth: document.body.offsetWidth,
-        bodyHeight: document.body.scrollHeight,
-        devicePixelRatio: window.devicePixelRatio,
-    }));
+    // Wait briefly for body to become available (may be null during navigation or on pages using <frameset>)
+    await page.waitForSelector("body", { timeout: 5000 }).catch(() => {});
+
+    // Get current scroll position and page dimensions, falling back to documentElement if body is null
+    const { scrollY, bodyWidth, bodyHeight, devicePixelRatio } = await page.evaluate(() => {
+        const el = document.body ?? document.documentElement;
+        return {
+            scrollY: window.scrollY,
+            bodyWidth: el.offsetWidth,
+            bodyHeight: el.scrollHeight,
+            devicePixelRatio: window.devicePixelRatio,
+        };
+    });
 
     const { width, maxHeight } = options ?? {
         width: bodyWidth,
