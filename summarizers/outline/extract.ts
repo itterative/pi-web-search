@@ -22,286 +22,305 @@ const MAX_ENTRY_CHARS = 20000;
 /** Preview text length */
 const PREVIEW_LENGTH = 100;
 
+/** A DOM node's metadata returned from page.evaluate */
+interface NodeInfo {
+    /** Index in the flat child list */
+    idx: number;
+    /** Node text content */
+    text: string;
+    /** Tag name (uppercase) */
+    tag: string;
+    /** Whether this node or its direct child is a heading */
+    isHeading: boolean;
+}
+
 /**
- * Extract a structural outline from the page by finding block-level containers
- * with significant text content, splitting/merging to keep entries in the
- * 5k-20k character range.
+ * Extract a structural outline from the page by finding the deepest meaningful
+ * content container, then splitting its children into sections at heading
+ * boundaries. Merges small adjacent sections to keep entries in the 5k–20k
+ * character range.
  *
- * Injects `data-outline-id` attributes into the DOM for later extraction.
+ * All DOM reads happen in page.evaluate; splitting/merging runs in Node.
  */
 export async function extractOutline(page: Page): Promise<OutlineEntry[]> {
-    const rawEntries = await page.evaluate(
-        (minChars: number, maxChars: number, previewLen: number) => {
-            // Find main content area
-            const mainSelectors = [
-                "article",
-                "[role='main']",
-                "main",
-                ".post-content",
-                ".article-content",
-                ".entry-content",
-                ".content",
-                "#content",
-                "#main",
-            ];
+    // ── Step 1: Read DOM structure ───────────────────────────────────────
+    const domData = await page.evaluate(() => {
+        const contentSelectors = [
+            "article",
+            "[role='main']",
+            "main",
+            ".post-content",
+            ".article-content",
+            ".entry-content",
+            ".s-prose",
+            ".mw-parser-output",
+            ".content",
+            "#content",
+            "#main",
+            "#bodyContent",
+            "#mw-content-text",
+        ];
 
-            let contentEl: Element | null = null;
-            for (const selector of mainSelectors) {
-                contentEl = document.querySelector(selector);
-                if (contentEl) break;
-            }
-            if (!contentEl) {
-                contentEl = document.body;
-            }
+        const blockTags = new Set([
+            "DIV",
+            "SECTION",
+            "ARTICLE",
+            "P",
+            "H1",
+            "H2",
+            "H3",
+            "H4",
+            "H5",
+            "H6",
+            "UL",
+            "OL",
+            "TABLE",
+            "PRE",
+            "BLOCKQUOTE",
+            "DETAILS",
+            "DL",
+            "FIGURE",
+            "FORM",
+            "FIELDSET",
+        ]);
 
-            // Remove unwanted elements
-            const removeSelectors = [
-                "nav",
-                "header",
-                "footer",
-                "aside",
-                ".sidebar",
-                ".navigation",
-                ".menu",
-                ".ads",
-                ".advertisement",
-                ".social",
-                ".share",
-                ".comments",
-                "script",
-                "style",
-                "noscript",
-                "iframe",
-            ];
+        const headingSelector = "h1, h2, h3, h4, h5, h6";
 
-            for (const selector of removeSelectors) {
-                contentEl.querySelectorAll(selector).forEach((el) => el.remove());
-            }
+        // Find best content container
+        let contentEl: Element = document.body;
+        let bestScore = 0;
+        for (const selector of contentSelectors) {
+            const matches = document.querySelectorAll(selector);
+            matches.forEach(function (el) {
+                let bc = 0;
+                for (const child of Array.from(el.children)) {
+                    if (!blockTags.has(child.tagName.toUpperCase())) continue;
+                    const text = child.textContent?.trim() ?? "";
+                    if (text.length > 0) bc++;
+                }
+                const textLen = el.textContent?.trim().length ?? 0;
+                if (bc >= 3 && textLen > 1000 && bc > bestScore) {
+                    bestScore = bc;
+                    contentEl = el;
+                }
+            });
+        }
 
-            // Collect block-level children that have text content
-            const blockTags = new Set([
-                "DIV",
-                "SECTION",
-                "ARTICLE",
-                "MAIN",
-                "P",
-                "H1",
-                "H2",
-                "H3",
-                "H4",
-                "H5",
-                "H6",
-                "UL",
-                "OL",
-                "LI",
-                "TABLE",
-                "PRE",
-                "BLOCKQUOTE",
-                "DETAILS",
-                "DL",
-                "FIGURE",
-                "FIGCAPTION",
-                "FORM",
-                "FIELDSET",
-            ]);
+        // Remove unwanted elements
+        const removeSelectors = [
+            "nav",
+            "header",
+            "footer",
+            "aside",
+            ".sidebar",
+            ".navigation",
+            ".menu",
+            ".ads",
+            ".advertisement",
+            ".social",
+            ".share",
+            ".comments",
+            "script",
+            "style",
+            "noscript",
+            "iframe",
+        ];
+        for (const selector of removeSelectors) {
+            contentEl.querySelectorAll(selector).forEach(function (el) {
+                el.remove();
+            });
+        }
 
-            // Get direct block children with their text
-            const candidates: { node: Element; text: string }[] = [];
-            for (const child of Array.from(contentEl.children)) {
-                if (!blockTags.has(child.tagName.toUpperCase())) continue;
+        // Collect direct block children info
+        const nodes: NodeInfo[] = [];
+        let idx = 0;
+        for (const child of Array.from(contentEl.children)) {
+            if (!blockTags.has(child.tagName.toUpperCase())) continue;
 
-                const style = window.getComputedStyle(child);
-                if (style.display === "none" || style.visibility === "hidden") continue;
+            const style = window.getComputedStyle(child);
+            if (style.display === "none" || style.visibility === "hidden") continue;
 
-                const text = child.textContent?.trim() ?? "";
-                if (text.length === 0) continue;
+            const text = child.textContent?.trim() ?? "";
+            if (text.length === 0) continue;
 
-                candidates.push({ node: child, text });
-            }
+            const isHeading =
+                child.matches(headingSelector) || child.querySelector(":scope > " + headingSelector) !== null;
 
-            // If no block children found, use the content element itself
-            if (candidates.length === 0) {
-                const text = contentEl.textContent?.trim() ?? "";
-                if (text.length === 0) return [];
+            nodes.push({ idx, text, tag: child.tagName, isHeading });
+            idx++;
+        }
 
-                const id = "outline-0";
-                contentEl.setAttribute("data-outline-id", id);
-                return [
-                    {
-                        outlineId: id,
-                        text,
-                        preview: text.slice(0, previewLen).replace(/\n/g, " "),
-                        charCount: text.length,
-                    },
-                ];
-            }
+        return { nodes, totalTextLen: contentEl.textContent?.trim().length ?? 0 };
+    });
 
-            // Phase 1: Split large nodes at heading boundaries
-            const headingSelectors = "h1, h2, h3, h4, h5, h6";
-            const splitNodes: { node: Element; text: string }[] = [];
+    if (domData.nodes.length === 0) return [];
 
-            for (const candidate of candidates) {
-                if (candidate.text.length <= maxChars) {
-                    splitNodes.push(candidate);
-                } else {
-                    // Try to split at heading boundaries
-                    const headings = Array.from(candidate.node.querySelectorAll(headingSelectors));
+    // ── Step 2: Split into sections at heading boundaries ────────────────
+    interface Section {
+        nodeIndices: number[];
+        text: string;
+    }
 
-                    if (headings.length > 1) {
-                        // Split into sections between headings
-                        let sectionNodes: Element[] = [];
-                        let sectionText = "";
+    const sections: Section[] = [];
+    let currentIndices: number[] = [];
+    let currentText = "";
 
-                        const flushSection = () => {
-                            if (sectionText.trim().length > 0) {
-                                const wrapper = document.createElement("div");
-                                sectionNodes.forEach((n) => wrapper.appendChild(n.cloneNode(true)));
-                                candidate.node.parentElement!.insertBefore(wrapper, candidate.node);
-                                splitNodes.push({ node: wrapper, text: sectionText.trim() });
-                                sectionNodes = [];
-                                sectionText = "";
-                            }
-                        };
+    function flushSection() {
+        const trimmed = currentText.trim();
+        if (trimmed.length === 0) return;
+        sections.push({ nodeIndices: [...currentIndices], text: trimmed });
+        currentIndices = [];
+        currentText = "";
+    }
 
-                        for (const child of Array.from(candidate.node.children)) {
-                            if (child.matches(headingSelectors)) {
-                                flushSection();
-                            }
-                            const childText = child.textContent?.trim() ?? "";
-                            if (childText.length > 0) {
-                                sectionNodes.push(child);
-                                sectionText += "\n" + childText;
-                            }
-                        }
-                        flushSection();
+    for (const node of domData.nodes) {
+        if (node.isHeading && currentText.trim().length > 0) {
+            flushSection();
+        }
 
-                        // Remove original node
-                        candidate.node.remove();
-                    } else {
-                        // Can't split at headings, split at paragraph boundaries
-                        const paragraphs = Array.from(candidate.node.querySelectorAll("p"));
-                        if (paragraphs.length > 1) {
-                            let chunkNodes: Element[] = [];
-                            let chunkText = "";
+        currentIndices.push(node.idx);
+        currentText += "\n" + node.text;
 
-                            const flushChunk = () => {
-                                if (chunkText.trim().length > 0) {
-                                    const wrapper = document.createElement("div");
-                                    chunkNodes.forEach((n) => wrapper.appendChild(n.cloneNode(true)));
-                                    candidate.node.parentElement!.insertBefore(wrapper, candidate.node);
-                                    splitNodes.push({ node: wrapper, text: chunkText.trim() });
-                                    chunkNodes = [];
-                                    chunkText = "";
-                                }
-                            };
+        if (node.text.length > MAX_ENTRY_CHARS) {
+            flushSection();
+        }
+    }
+    flushSection();
 
-                            for (const p of paragraphs) {
-                                const pText = p.textContent?.trim() ?? "";
-                                if (chunkText.length + pText.length > maxChars && chunkText.length > 0) {
-                                    flushChunk();
-                                }
-                                chunkNodes.push(p);
-                                chunkText += "\n" + pText;
-                            }
-                            flushChunk();
+    // ── Step 3: Merge small adjacent sections ────────────────────────────
+    interface MergedSection {
+        nodeIndices: number[];
+        text: string;
+    }
 
-                            candidate.node.remove();
-                        } else {
-                            // No good split points, keep as-is
-                            splitNodes.push(candidate);
-                        }
-                    }
+    const merged: MergedSection[] = [];
+    let mergeIndices: number[] = [];
+    let mergeText = "";
+
+    function flushMerged() {
+        const trimmed = mergeText.trim();
+        if (trimmed.length === 0) return;
+        merged.push({ nodeIndices: [...mergeIndices], text: trimmed });
+        mergeIndices = [];
+        mergeText = "";
+    }
+
+    for (const section of sections) {
+        mergeIndices.push(...section.nodeIndices);
+        mergeText += "\n" + section.text;
+
+        if (mergeText.trim().length >= MIN_ENTRY_CHARS) {
+            flushMerged();
+        }
+    }
+
+    // Flush remaining
+    if (mergeText.trim().length > 0) {
+        if (merged.length > 0) {
+            const last = merged[merged.length - 1];
+            last.nodeIndices.push(...mergeIndices);
+            last.text += "\n" + mergeText.trim();
+        } else {
+            flushMerged();
+        }
+    }
+
+    if (merged.length === 0) return [];
+
+    // ── Step 4: Tag DOM nodes and build result ───────────────────────────
+    // Build a mapping: nodeIdx -> outlineId
+    const nodeToOutline: Map<number, string> = new Map();
+    const entries: OutlineEntry[] = merged.map(function (section, i) {
+        const outlineId = `outline-${i}`;
+        for (const idx of section.nodeIndices) {
+            nodeToOutline.set(idx, outlineId);
+        }
+        return {
+            index: i + 1,
+            preview: section.text.slice(0, PREVIEW_LENGTH).replace(/\n/g, " "),
+            charCount: section.text.length,
+            outlineId,
+        };
+    });
+
+    // Write data-outline-id attributes back to the DOM
+    await page.evaluate(function (mapping: Array<[number, string]>) {
+        // Re-find the content container
+        const contentSelectors = [
+            "article",
+            "[role='main']",
+            "main",
+            ".post-content",
+            ".article-content",
+            ".entry-content",
+            ".s-prose",
+            ".mw-parser-output",
+            ".content",
+            "#content",
+            "#main",
+            "#bodyContent",
+            "#mw-content-text",
+        ];
+
+        const blockTags = new Set([
+            "DIV",
+            "SECTION",
+            "ARTICLE",
+            "P",
+            "H1",
+            "H2",
+            "H3",
+            "H4",
+            "H5",
+            "H6",
+            "UL",
+            "OL",
+            "TABLE",
+            "PRE",
+            "BLOCKQUOTE",
+            "DETAILS",
+            "DL",
+            "FIGURE",
+            "FORM",
+            "FIELDSET",
+        ]);
+
+        let contentEl: Element = document.body;
+        let bestScore = 0;
+        for (const selector of contentSelectors) {
+            const matches = document.querySelectorAll(selector);
+            matches.forEach(function (el) {
+                let bc = 0;
+                for (const child of Array.from(el.children)) {
+                    if (!blockTags.has(child.tagName.toUpperCase())) continue;
+                    const text = child.textContent?.trim() ?? "";
+                    if (text.length > 0) bc++;
+                }
+                const textLen = el.textContent?.trim().length ?? 0;
+                if (bc >= 3 && textLen > 1000 && bc > bestScore) {
+                    bestScore = bc;
+                    contentEl = el;
+                }
+            });
+        }
+
+        // Collect the same block children in the same order
+        let idx = 0;
+        for (const child of Array.from(contentEl.children)) {
+            if (!blockTags.has(child.tagName.toUpperCase())) continue;
+            const style = window.getComputedStyle(child);
+            if (style.display === "none" || style.visibility === "hidden") continue;
+            const text = child.textContent?.trim() ?? "";
+            if (text.length === 0) continue;
+
+            for (const [nodeIdx, outlineId] of mapping) {
+                if (nodeIdx === idx) {
+                    child.setAttribute("data-outline-id", outlineId);
                 }
             }
-
-            // Phase 2: Merge small adjacent nodes
-            // Result entries: { outlineId, text, preview, charCount }
-            const result: { outlineId: string; text: string; preview: string; charCount: number }[] = [];
-            let mergeBuffer: { node: Element; text: string }[] = [];
-            let mergeText = "";
-
-            const flushMerged = () => {
-                if (mergeText.trim().length === 0) return;
-
-                const id = `outline-${result.length}`;
-                if (mergeBuffer.length === 1) {
-                    // Single node
-                    mergeBuffer[0].node.setAttribute("data-outline-id", id);
-                } else {
-                    // Multiple nodes merged - wrap in container
-                    const wrapper = document.createElement("div");
-                    const parent = mergeBuffer[0].node.parentElement;
-                    mergeBuffer.forEach((b) => {
-                        wrapper.appendChild(b.node.cloneNode(true));
-                        b.node.remove();
-                    });
-                    if (parent) {
-                        parent.insertBefore(wrapper, mergeBuffer[0].node);
-                    } else {
-                        document.body.appendChild(wrapper);
-                    }
-                    wrapper.setAttribute("data-outline-id", id);
-                }
-
-                const text = mergeText.trim();
-                result.push({
-                    outlineId: id,
-                    text,
-                    preview: text.slice(0, previewLen).replace(/\n/g, " "),
-                    charCount: text.length,
-                });
-                mergeBuffer = [];
-                mergeText = "";
-            };
-
-            for (const node of splitNodes) {
-                mergeBuffer.push(node);
-                mergeText += "\n" + node.text;
-
-                if (mergeText.trim().length >= minChars) {
-                    flushMerged();
-                }
-            }
-
-            // Flush remaining small nodes
-            if (mergeText.trim().length > 0) {
-                if (result.length > 0) {
-                    // Append to last entry
-                    const lastEntry = result[result.length - 1];
-                    lastEntry.text += "\n" + mergeText.trim();
-                    lastEntry.charCount = lastEntry.text.length;
-                    lastEntry.preview = lastEntry.text.slice(0, previewLen).replace(/\n/g, " ");
-
-                    // Move remaining nodes under last entry's element
-                    const lastEl = document.querySelector(`[data-outline-id="${lastEntry.outlineId}"]`);
-                    if (lastEl) {
-                        mergeBuffer.forEach((b) => {
-                            lastEl.appendChild(b.node.cloneNode(true));
-                            b.node.remove();
-                        });
-                    }
-                } else {
-                    // Only entry, keep it even if small
-                    flushMerged();
-                }
-            }
-
-            return result;
-        },
-        MIN_ENTRY_CHARS,
-        MAX_ENTRY_CHARS,
-        PREVIEW_LENGTH,
-    );
-
-    if (!rawEntries || rawEntries.length === 0) return [];
-
-    // Build OutlineEntry list with sequential indices
-    const entries: OutlineEntry[] = rawEntries.map((e, i) => ({
-        index: i + 1,
-        preview: e.preview,
-        charCount: e.charCount,
-        outlineId: e.outlineId,
-    }));
+            idx++;
+        }
+    }, Array.from(nodeToOutline.entries()));
 
     return entries;
 }
@@ -313,70 +332,84 @@ export async function extractOutline(page: Page): Promise<OutlineEntry[]> {
 export async function extractSelectedContent(page: Page, entries: OutlineEntry[]): Promise<string> {
     const outlineIds = entries.map((e) => e.outlineId);
 
-    const texts = await page.evaluate((ids: string[]) => {
+    const texts = await page.evaluate(function (ids: string[]) {
         const results: string[] = [];
 
         for (const id of ids) {
-            const el = document.querySelector(`[data-outline-id="${id}"]`);
-            if (!el) continue;
+            const nodes = document.querySelectorAll('[data-outline-id="' + id + '"]');
+            if (nodes.length === 0) continue;
 
-            // Reuse the same text extraction logic as extractRawContent
-            const extractText = (node: Element): string => {
-                const parts: string[] = [];
+            const sectionTexts: string[] = [];
 
-                for (const child of Array.from(node.childNodes)) {
-                    if (child.nodeType === Node.TEXT_NODE) {
-                        const text = child.textContent?.trim();
-                        if (text) parts.push(text);
-                    } else if (child.nodeType === Node.ELEMENT_NODE) {
-                        const elem = child as Element;
-                        const tag = elem.tagName.toLowerCase();
+            for (let ni = 0; ni < nodes.length; ni++) {
+                const el = nodes[ni];
 
-                        const style = window.getComputedStyle(elem);
-                        if (style.display === "none" || style.visibility === "hidden") continue;
+                // Recursive text extraction with markdown formatting
+                function formatText(node: Element, outlineId: string): string {
+                    const pieces: string[] = [];
 
-                        const childText = extractText(elem);
+                    for (const child of Array.from(node.childNodes)) {
+                        if (child.nodeType === Node.TEXT_NODE) {
+                            const t = child.textContent?.trim();
+                            if (t) pieces.push(t);
+                        } else if (child.nodeType === Node.ELEMENT_NODE) {
+                            const elem = child as Element;
+                            const tag = elem.tagName.toLowerCase();
 
-                        if (["h1", "h2", "h3", "h4", "h5", "h6"].includes(tag)) {
-                            const prefix = "#".repeat(parseInt(tag[1]));
-                            parts.push(`\n\n${prefix} ${childText}\n`);
-                        } else if (tag === "p") {
-                            parts.push(`\n\n${childText}`);
-                        } else if (tag === "br") {
-                            parts.push("\n");
-                        } else if (tag === "li") {
-                            parts.push(`\n- ${childText}`);
-                        } else if (tag === "a") {
-                            const href = elem.getAttribute("href");
-                            if (href && childText) {
-                                parts.push(`[${childText}](${href})`);
+                            const attr = elem.getAttribute("data-outline-id");
+                            if (attr && attr !== outlineId) continue;
+
+                            const style = window.getComputedStyle(elem);
+                            if (style.display === "none" || style.visibility === "hidden") continue;
+
+                            const inner = formatText(elem, outlineId);
+                            if (!inner) continue;
+
+                            if (["h1", "h2", "h3", "h4", "h5", "h6"].indexOf(tag) !== -1) {
+                                const prefix = "#".repeat(parseInt(tag[1]));
+                                pieces.push("\n\n" + prefix + " " + inner + "\n");
+                            } else if (tag === "p") {
+                                pieces.push("\n\n" + inner);
+                            } else if (tag === "br") {
+                                pieces.push("\n");
+                            } else if (tag === "li") {
+                                pieces.push("\n- " + inner);
+                            } else if (tag === "a") {
+                                const href = elem.getAttribute("href");
+                                if (href && inner) {
+                                    pieces.push("[" + inner + "](" + href + ")");
+                                } else {
+                                    pieces.push(inner);
+                                }
+                            } else if (tag === "code") {
+                                pieces.push("`" + inner + "`");
+                            } else if (tag === "pre") {
+                                pieces.push("\n```\n" + inner + "\n```\n");
+                            } else if (tag === "blockquote") {
+                                const lines = inner
+                                    .split("\n")
+                                    .map(function (l) {
+                                        return "> " + l;
+                                    })
+                                    .join("\n");
+                                pieces.push("\n\n" + lines + "\n");
                             } else {
-                                parts.push(childText);
+                                pieces.push(inner);
                             }
-                        } else if (tag === "code") {
-                            parts.push(`\`${childText}\``);
-                        } else if (tag === "pre") {
-                            parts.push(`\n\`\`\`\n${childText}\n\`\`\`\n`);
-                        } else if (tag === "blockquote") {
-                            const lines = childText
-                                .split("\n")
-                                .map((l: string) => `> ${l}`)
-                                .join("\n");
-                            parts.push(`\n\n${lines}\n`);
-                        } else {
-                            parts.push(childText);
                         }
                     }
+
+                    return pieces.join(" ");
                 }
 
-                return parts.join(" ");
-            };
+                const text = formatText(el, id)
+                    .replace(/\n{3,}/g, "\n\n")
+                    .replace(/^\s+|\s+$/g, "");
 
-            const text = extractText(el)
-                .replace(/\n{3,}/g, "\n\n")
-                .replace(/^\s+|\s+$/g, "");
+                if (text) sectionTexts.push(text);
+            }
 
-            results.push(text);
+            results.push(sectionTexts.join("\n\n"));
         }
 
         return results;
